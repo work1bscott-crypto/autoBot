@@ -98,6 +98,7 @@ try:
         password=result.password,
         host=result.hostname,
         port=result.port
+        sslmode='require'
     )
     cursor = conn.cursor()
 
