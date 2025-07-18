@@ -97,7 +97,7 @@ try:
         user=result.username,
         password=result.password,
         host=result.hostname,
-        port=result.port
+        port=result.port,
         sslmode='require'
     )
     cursor = conn.cursor()
@@ -182,7 +182,7 @@ try:
         completed_at TIMESTAMP,
         PRIMARY KEY (user_id, task_id),
         FOREIGN KEY (user_id) REFERENCES users(chat_id),
-        FOREIGN КEY (task_id) REFERENCES tasks(id)
+        FOREIGN KEY (task_id) REFERENCES tasks(id)
     )
     """)
 
