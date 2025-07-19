@@ -1,1 +1,1 @@
-python EthBot.py
+web: python EthBot.py
