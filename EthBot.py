@@ -1,5 +1,5 @@
 import logging
-import psycopg2
+import psycopg  # Changed from psycopg2 to psycopg3
 import re
 import time
 import secrets
@@ -93,7 +93,7 @@ try:
 
     url = os.getenv("DATABASE_URL")
     result = urlparse.urlparse(url)
-    conn = psycopg2.connect(
+    conn = psycopg.connect(  # Changed to psycopg.connect
         dbname=result.path[1:],
         user=result.username,
         password=result.password,
@@ -188,7 +188,7 @@ try:
     """)
 
     conn.commit()
-except psycopg2.Error as e:
+except psycopg.Error as e:  # Changed to psycopg.Error
     logging.error(f"Database error: {e}")
     raise
 
@@ -206,7 +206,7 @@ def get_status(chat_id):
         cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
         row = cursor.fetchone()
         return row[0] if row else None
-    except psycopg2.Error as e:
+    except psycopg.Error as e:  # Changed to psycopg.Error
         logger.error(f"Database error in get_status: {e}")
         return None
 
@@ -214,7 +214,7 @@ def log_interaction(chat_id, action):
     try:
         cursor.execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
         conn.commit()
-    except psycopg2.Error as e:
+    except psycopg.Error as e:  # Changed to psycopg.Error
         logger.error(f"Database error in log_interaction: {e}")
 
 def generate_referral_code():
@@ -240,7 +240,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if referred_by:
                 cursor.execute("UPDATE users SET invites = invites + 1, balance = balance + 0.1 WHERE chat_id=%s", (referred_by,))
                 conn.commit()
-    except psycopg2.Error as e12:
+    except psycopg.Error as e12:  # Changed to psycopg.Error
         logger.error(f"Database error in start: {e12}")
         await update.message.reply_text("An error occurred. Please try again.")
         return
@@ -293,7 +293,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    except psycopg2.Error as e13:
+    except psycopg.Error as e13:  # Changed to psycopg.Error
         logger.error(f"Database error in stats: {e13}")
         await update.message.reply_text("An error occurred. Please try again.")
 
@@ -329,7 +329,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         await update.message.reply_text("Task added successfully.")
         log_interaction(chat_id, "add_task")
-    except psycopg2.Error as e14:
+    except psycopg.Error as e14:  # Changed to psycopg.Error
         logger.error(f"Database error in add_task: {e14}")
         await update.message.reply_text("An error occurred. Please try again.")
 
@@ -502,7 +502,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
                 keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
                 await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
-            except psycopg2.Error as e15:
+            except psycopg.Error as e15:  # Changed to psycopg.Error
                 logger.error(f"Database error in package_selector: {e15}")
                 await query.edit_message_text("An error occurred. Please try again.")
                 return
@@ -553,7 +553,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode="Markdown"
                     )
                     await query.edit_message_text("Payment approved. Waiting for user details.")
-                except psycopg2.Error as e16:
+                except psycopg.Error as e16:  # Changed to psycopg.Error
                     logger.error(f"Database error in approve_reg: {e16}")
                     await query.edit_message_text("An error occurred. Please try again.")
             elif parts[1] == "coupon":
@@ -564,7 +564,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_state[ADMIN_ID] = {'expecting': {'type': 'coupon_codes', 'payment_id': payment_id}}
                     await context.bot.send_message(ADMIN_ID, f"Payment {payment_id} approved. Please send the coupon codes (one per line).")
                     await query.edit_message_text("Payment approved. Waiting for coupon codes.")
-                except psycopg2.Error as e17:
+                except psycopg.Error as e17:  # Changed to psycopg.Error
                     logger.error(f"Database error in approve_coupon: {e17}")
                     await query.edit_message_text("An error occurred. Please try again.")
             elif parts[1] == "task":
@@ -578,7 +578,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     conn.commit()
                     await context.bot.send_message(user_chat_id, f"Task approved! You earned ${reward}.")
                     await query.edit_message_text("Task approved and reward awarded.")
-                except psycopg2.Error as e18:
+                except psycopg.Error as e18:  # Changed to psycopg.Error
                     logger.error(f"Database error in approve_task: {e18}")
                     await query.edit_message_text("An error occurred. Please try again.")
         elif data.startswith("finalize_reg_"):
@@ -606,7 +606,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.edit_message_text("Task rejected and reward removed.")
                 else:
                     await query.edit_message_text("Task rejected, but balance insufficient to revoke reward.")
-            except psycopg2.Error as e19:
+            except psycopg.Error as e19:  # Changed to psycopg.Error
                 logger.error(f"Database error in reject_task: {e19}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data.startswith("pending_"):
@@ -619,7 +619,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
                     user_chat_id = cursor.fetchone()[0]
                     await context.bot.send_message(user_chat_id, "Your coupon payment is still being reviewed.")
-                except psycopg2.Error as e20:
+                except psycopg.Error as e20:  # Changed to psycopg.Error
                     logger.error(f"Database error in pending_coupon: {e20}")
                     await query.edit_message_text("An error occurred. Please try again.")
         elif data == "check_approval":
@@ -644,7 +644,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "Coupon payment approved. Check your coupons above.")
                     else:
                         await context.bot.send_message(chat_id, "Your coupon payment is being reviewed.")
-                except psycopg2.Error as e21:
+                except psycopg.Error as e21:  # Changed to psycopg.Error
                     logger.error(f"Database error in check_approval: {e21}")
                     await context.bot.send_message(chat_id, "An error occurred. Please try again.")
         elif data == "toggle_reminder":
@@ -656,7 +656,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.commit()
                 status = "enabled" if new_setting == 1 else "disabled"
                 await query.edit_message_text(f"Daily reminder {status}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
-            except psycopg2.Error as e22:
+            except psycopg.Error as e22:  # Changed to psycopg.Error
                 logger.error(f"Database error in toggle_reminder: {e22}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "boost_ai":
@@ -681,7 +681,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await query.edit_message_text("No registration data found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
-            except psycopg2.Error as e23:
+            except psycopg.Error as e23:  # Changed to psycopg.Error
                 logger.error(f"Database error in user_registered: {e23}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "daily_tasks":
@@ -692,7 +692,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if package == "X":
                     msg = f"🌟 X Users: Maximize your earnings with this special daily task link: {DAILY_TASK_LINK}"
                 await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
-            except psycopg2.Error as e24:
+            except psycopg.Error as e24:  # Changed to psycopg.Error
                 logger.error(f"Database error in daily_tasks: {e24}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "earn_extra":
@@ -719,7 +719,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     keyboard.append([join_button, verify_button])
                 keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
                 await query.edit_message_text("Available extra tasks for today:", reply_markup=InlineKeyboardMarkup(keyboard))
-            except psycopg2.Error as e25:
+            except psycopg.Error as e25:  # Changed to psycopg.Error
                 logger.error(f"Database error in earn_extra: {e25}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data.startswith("verify_task_"):
@@ -731,8 +731,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Task not found.")
                     return
                 task_type, link = task
+                regel = re.compile(r'(@[A-Za-z0-9]+)|(?:https?://)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))/([A-Za-z0-9\+]+)')
+                chat_username = regel.search(link).group()
+                if chat_username.startswith("http"):
+                    chat_username = chat_username.split("/")[-1]
                 if task_type in ["join_group", "join_channel"]:
-                    chat_username = link.split("/")[-1]
                     try:
                         member = await context.bot.get_chat_member(chat_username, chat_id)
                         if member.status in ["member", "administrator", "creator"]:
@@ -750,7 +753,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif task_type == "external_task":
                     user_state[chat_id] = {'expecting': 'task_screenshot', 'task_id': task_id}
                     await context.bot.send_message(chat_id, f"Please send the screenshot for task #{task_id} verification.")
-            except psycopg2.Error as e27:
+            except psycopg.Error as e27:  # Changed to psycopg.Error
                 logger.error(f"Database error in verify_task: {e27}")
                 await query.answer("An error occurred. Please try again.")
         elif data == "faq":
@@ -799,7 +802,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "✅ Daily reminders enabled!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
                 )
-            except psycopg2.Error as e28:
+            except psycopg.Error as e28:  # Changed to psycopg.Error
                 logger.error(f"Database error in enable_reminders: {e28}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "disable_reminders":
@@ -810,7 +813,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "❌ Okay, daily reminders not set.",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
                 )
-            except psycopg2.Error as e29:
+            except psycopg.Error as e29:  # Changed to psycopg.Error
                 logger.error(f"Database error in disable_reminders: {e29}")
                 await query.edit_message_text("An error occurred. Please try again.")
         else:
@@ -889,7 +892,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     quantity = int(text)
                     if quantity <= 0:
                         raise ValueError
-                    user_state[chat_id]['coupon_quantity'] = quantity
+                    user_state[chat_id]['coupon_quantity'] | quantity
                     keyboard = [
                         [InlineKeyboardButton("Standard (₦9,000)", callback_data="coupon_standard")],
                         [InlineKeyboardButton("X (₦14,000)", callback_data="coupon_x")],
@@ -1030,7 +1033,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "✅ Details received! Awaiting admin finalization.",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
                 )
-            except psycopg2.Error as e34:
+            except psycopg.Error as e34:  # Changed to psycopg.Error
                 logger.error(f"Database error in pending_details: {e34}")
                 await update.message.reply_text("An error occurred. Please try again.")
 
@@ -1051,7 +1054,7 @@ async def check_coupon_payment(context: ContextTypes.DEFAULT_TYPE):
             chat_id = row[1]
             keyboard = [[InlineKeyboardButton("Payment Approval Stats", callback_data="check_approval")]]
             await context.bot.send_message(chat_id, "Your coupon payment is still being reviewed. Click below to check status:", reply_markup=InlineKeyboardMarkup(keyboard))
-    except psycopg2.Error as e35:
+    except psycopg.Error as e35:  # Changed to psycopg.Error
         logger.error(f"Database error in check_coupon_payment: {e35}")
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
@@ -1064,7 +1067,7 @@ async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
                 log_interaction(user_id, "daily_reminder")
             except Exception as e36:
                 logger.error(f"Failed to send reminder to {user_id}: {e36}")
-    except psycopg2.Error as e37:
+    except psycopg.Error as e37:  # Changed to psycopg.Error
         logger.error(f"Database error in daily_reminder: {e37}")
 
 async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
@@ -1099,7 +1102,7 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
             f"• Total Balance Distributed: ${total_distributed}"
         )
         await context.bot.send_message(ADMIN_ID, text)
-    except psycopg2.Error as e38:
+    except psycopg.Error as e38:  # Changed to psycopg.Error
         logger.error(f"Database error in daily_summary: {e38}")
         await context.bot.send_message(ADMIN_ID, "Error generating daily summary.")
 
@@ -1131,7 +1134,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         log_interaction(chat_id, "show_main_menu")
-    except psycopg2.Error as e39:
+    except psycopg.Error as e39:  # Changed to psycopg.Error
         logger.error(f"Database error in show_main_menu: {e39}")
         await update.message.reply_text("An error occurred. Please try again.")
 
