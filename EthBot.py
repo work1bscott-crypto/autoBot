@@ -14,6 +14,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from pydub import AudioSegment
 from flask import Flask
 from threading import Thread
 
@@ -56,12 +57,12 @@ COUPON_PAYMENT_ACCOUNTS = {
 # Predefined FAQs
 FAQS = {
     "what_is_ethereal": {
-        "question": "What is Ethereal?",
-        "answer": "Ethereal is a platform where you earn money by completing tasks like reading posts, playing games, sending Snapchat streaks, and inviting friends."
+        "question": "What is Tapify?",
+        "answer": "Tapify is a platform where you earn money by completing tasks like taking a walk, reading posts, playing games, sending Snapchat streaks, and inviting friends."
     },
     "payment_methods": {
         "question": "What payment methods are available?",
-        "answer": "Payments can be made via bank transfer, mobile money, or Zelle. Check the 'How to Pay' guide in the Help menu."
+        "answer": "Payments can be made via bank transfer, mobile money, PayPal or Zelle for foreign accounts. Check the 'How to Pay' guide in the Help menu."
     },
     "task_rewards": {
         "question": "How are task rewards calculated?",
@@ -71,14 +72,14 @@ FAQS = {
 
 # Help topics
 HELP_TOPICS = {
-    "how_to_pay": {"label": "How to Pay", "type": "video", "url": "https://youtu.be/YourPaymentGuide"},
+    "how_to_pay": {"label": "How to Pay", "type": "video", "url": "https://youtu.be/ (will be available soon)"},
     "register": {"label": "Registration Process", "type": "text", "text": (
         "1. /start → choose package\n"
         "2. Pay via your selected account → upload screenshot\n"
         "3. Wait for approval, then send details\n"
         "4. Join the group and start earning! 🎉"
     )},
-    "daily_tasks": {"label": "Daily Tasks", "type": "video", "url": "https://youtu.be/YourTasksGuide"},
+    "daily_tasks": {"label": "Daily Tasks", "type": "video", "url": "https://youtu.be/ (will be available soon)"},
     "reminder": {"label": "Toggle Reminder", "type": "toggle"},
     "faq": {"label": "FAQs", "type": "faq"},
     "apply_coach": {"label": "Apply to become Coach", "type": "text", "text": (
@@ -86,6 +87,11 @@ HELP_TOPICS = {
     )},
     "password_recovery": {"label": "Password Recovery", "type": "input", "text": "Please provide your registered email to request password recovery:"},
 }
+
+# Convert mp3 to ogg (Opus)
+sound = AudioSegment.from_mp3("voice.mp3")
+sound.export("voice.ogg", format="ogg",
+codec="libopus")
 
 # Database setup with PostgreSQL
 try:
@@ -244,10 +250,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Database error in start: {e12}")
         await update.message.reply_text("An error occurred. Please try again.")
         return
-    keyboard = [[InlineKeyboardButton("🚀 Proceed", callback_data="menu")]]
+    keyboard = [[InlineKeyboardButton("🚀 Get Started", callback_data="menu")]]
     await update.message.reply_text(
-        "Welcome to Ethereal!\n\nGet paid for working with AI and doing what you love most.\n"
-        "• Read posts ➜ earn $2.5/10 words\n• Play Candy Crush daily ➜ earn $5\n"
+        "Welcome to Tapify!\n\nGet paid for using your phone and doing what you love most.\n"
+        "• Read posts ➜ earn $2.5/10 words\n• Take a Walk ➜ earn $5\n"
         "• Send Snapchat streaks ➜ earn up to $20\n• Invite friends and more!\n\n"
         "Choose your package and start earning today.\nClick below to get started.",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -386,107 +392,116 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         elif data == "how_it_works":
             keyboard = [
-                [InlineKeyboardButton("💎Get Started", callback_data="package_selector")],
+                [InlineKeyboardButton("💎TAP MEEE!!!!", callback_data="package_selector")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
             ]
             await query.edit_message_text(
-                "🔖 How Ethereal💚 Works\n"
-                "Ethereal rewards you for everyday activities — like reading posts, playing games (e.g., Candy Crush), "
-                "sending Snapchat streaks, and clicking links.\n"
+                "🟡 HOW TAPIFY💥 WORKS\n"
+                "Tapify rewards you for your everyday online actions — walking, gaming, sending snaps, joining forums, and social engagement.\n"
                 "— — —\n"
-                "📍 ETHEREAL STANDARD — ₦9,000\n"
-                "• Instant ₦8,000 cashback\n"
-                "• Free up to 3GB data on signup\n"
-                "• Earn up to $1 per link\n"
-                "• Earn up to ₦2,500 for every 10 words read\n"
-                "• Up to ₦5,000 daily from Candy Crush\n"
-                "• Daily passive income from your team + your earnings (₦5,000 daily)\n"
-                "• Earn up to $20 sending Snapchat streaks\n"
-                "• ₦8,100–₦8,400 per person you invite\n"
-                "• Valid for 5 months (renewal fee required)\n"
-                "• No personal AI-assisted earnings\n\n"
-                "— — —\n\n"
-                "📍 ETHEREAL-X — ₦14,000\n"
-                "• Instant ₦12,000 cashback\n"
-                "• Free up to 5GB data on signup\n"
-                "• Earn up to $2 per link\n"
-                "• Earn up to ₦3,500 per 10 words (no cap)\n"
+                "📍 TAPIFY STANDARD PACKAGE — ₦10,000\n"
+                "• 🎉 Starter Reward: ₦8,000 Newbie Bonus\n"
+                "• 🛜 Free Data: 5GB on your preferred network\n"
+                "• 🪙 Tap Coins: Instant $10 reward\n"
+                "• 💰 Revenue Share: ₦9,000 per direct recruit\n"
+                "• 🔁 Indirect Earnings: ₦250 (1st level) – ₦100 (2nd level)\n"
+                "• 🧾 Forum Earnings: ₦200 per 10 words\n"
+                "• 🎥 Snapchat/TikTok Streaks: $10 per streak\n"
+                "• 🚶‍♂ Steps: ₦10 per 100 steps\n"
+                "• 🏍 Rider Earnings: ₦20 per delivery\n"
+                "• 📖 Reading Tasks: ₦0.2 per novel read\n\n"
+                "• 🎙 Recording Tasks: ₦0.2 per audio\n"
+                "• 📤 Approved Topics & Social Links: ₦5 each\n"
+                "• 🎮 Tapify Games: ₦20 per session\n"
+                "• 🧑‍🤝‍🧑 Unlimited Team Earnings: Passive income from your team\n"
+                "• 🏦 Student Loans: No collateral required\n"
+                "• 💳 Automated Withdrawals: Weekly payouts\n"
                 "• Up to ₦5,000 daily from Candy Crush\n"
                 "• Earn up to $50 sending Snapchat streaks\n"
                 "• Daily passive income from your team + your earnings (₦10,000 daily)\n"
-                "• ₦12,500–₦13,000 per person you invite\n"
-                "• Valid for 1 year (no renewal fee)\n"
-                "• Includes personal AI-assisted earnings",
+                "• 📺 Subscription Bonuses: Free access to GOtv, DStv & Netflix\n"
+                 "— — —\n\n"
+                " Ensure to listen to the Voice Note below to understand more about our features...",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        elif data == "coupon":
-            user_state[chat_id] = {'expecting': 'coupon_quantity'}
-            keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]
-            await query.edit_message_text("How many coupons do you want to purchase?", reply_markup=InlineKeyboardMarkup(keyboard))
-        elif data in ["coupon_standard", "coupon_x"]:
-            package = "Standard" if data == "coupon_standard" else "X"
-            price = 9000 if package == "Standard" else 14000
-            quantity = user_state[chat_id]['coupon_quantity']
-            total = quantity * price
-            user_state[chat_id].update({'coupon_package': package, 'coupon_total': total})
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) wants to purchase {quantity} {package} coupons for ₦{total}."
-            )
-            keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
-            keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
-            keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-            await query.edit_message_text(
-                f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        elif data.startswith("coupon_account_"):
-            account = data[len("coupon_account_"):]
-            payment_details = COUPON_PAYMENT_ACCOUNTS.get(account)
-            if not payment_details:
-                await context.bot.send_message(chat_id, "Error: Invalid account. Contact @bigscottmedia.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
-                return
-            user_state[chat_id]['selected_account'] = account
-            cursor.execute(
-                "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account) "
-                "VALUES (%s, 'coupon', %s, %s, %s, %s) RETURNING id",
-                (chat_id, user_state[chat_id]['coupon_package'], user_state[chat_id]['coupon_quantity'], user_state[chat_id]['coupon_total'], account)
-            )
-            payment_id = cursor.fetchone()[0]
-            conn.commit()
-            user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
-            keyboard = [
-                [InlineKeyboardButton("Change Account", callback_data="change_coupon_account")],
-                [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
-            ]
-            await context.bot.send_message(
-                chat_id,
-                f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            user_state[chat_id]['expecting'] = 'coupon_screenshot'
-        elif data == "change_coupon_account":
-            keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
-            keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
-            keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-            await query.edit_message_text(
-                f"You are purchasing {user_state[chat_id]['coupon_quantity']} {user_state[chat_id]['coupon_package']} coupons.\nTotal amount: ₦{user_state[chat_id]['coupon_total']}\n\nSelect the account to pay to:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        elif data == "coupon_other":
-            await context.bot.send_message(
-                chat_id,
-                "Please contact @bigscottmedia to complete your coupon purchase.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
-            )
+            voice_keyboard = [
+        [InlineKeyboardButton("✅ I've listened...", callback_data="close_voice")]  # 👈 special button
+        voice_markup = InlineKeyboardMarkup(voice_keyboard)
+
+    # Send the voice note with buttons
+    with open("voice.ogg", "rb") as voice:
+        await context.bot.send_voice(
+            chat_id=query.message.chat_id,
+            voice=voice,
+            caption="Tapify Explained 🎧",
+            reply_markup=voice_markup
+        )
+
+            elif data == "close_voice":
+    # Delete the entire message (voice + buttons)
+                await query.message.delete()
+            elif data == "coupon":
+    user_state[chat_id] = {'expecting': 'coupon_quantity'}
+    keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]
+    await query.edit_message_text(
+        "How many coupons do you want to purchase?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+	# Handle only Standard coupons for now
+	elif data == "coupon_standard":
+	    package = "Standard"
+	    price = 9000
+	    quantity = user_state[chat_id]['coupon_quantity']
+	    total = quantity * price
+	    user_state[chat_id].update({'coupon_package': package, 'coupon_total': total})
+	
+	    await context.bot.send_message(
+	        ADMIN_ID,
+	        f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) "
+	        f"wants to purchase {quantity} {package} coupons for ₦{total}."
+	    )
+	
+	    keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
+	    keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
+	    keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
+	
+	    await query.edit_message_text(
+	        f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
+	        reply_markup=InlineKeyboardMarkup(keyboard)
+	    )
+	
+	# 🔴 Disabled for now (uncomment when "X" package is ready)
+	# elif data == "coupon_x":
+	#     package = "X"
+	#     price = 14000
+	#     quantity = user_state[chat_id]['coupon_quantity']
+	#     total = quantity * price
+	#     user_state[chat_id].update({'coupon_package': package, 'coupon_total': total})
+	#
+	#     await context.bot.send_message(
+	#         ADMIN_ID,
+	#         f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) "
+	#         f"wants to purchase {quantity} {package} coupons for ₦{total}."
+	#     )
+	#
+	#     keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
+	#     keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
+	#     keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
+	#
+	#     await query.edit_message_text(
+	#         f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
+	#         reply_markup=InlineKeyboardMarkup(keyboard)
+	#     )
+            
         elif data == "package_selector":
             status = get_status(chat_id)
             if status == 'registered':
                 await context.bot.send_message(chat_id, "You are already registered.")
                 return
             keyboard = [
-                [InlineKeyboardButton("🚀X (₦14,000)", callback_data="reg_x")],
-                [InlineKeyboardButton("✈️Standard (₦9,000)", callback_data="reg_standard")],
+                #[InlineKeyboardButton("🚀X (₦14,000)", callback_data="reg_x")],
+                [InlineKeyboardButton("✈️Standard (₦10,000)", callback_data="reg_standard")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
             ]
             await query.edit_message_text("Choose your package:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -661,7 +676,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "boost_ai":
             await query.edit_message_text(
-                f"🚀 Boost with AI\n\nAccess AI-powered features to maximize your earnings: {AI_BOOST_LINK}",
+                f"🚀 Boost with AI\n\nAccess Advanced AI-powered features to maximize your earnings: {AI_BOOST_LINK}",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
             )
         elif data == "user_registered":
@@ -894,8 +909,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         raise ValueError
                     user_state[chat_id]['coupon_quantity'] | quantity
                     keyboard = [
-                        [InlineKeyboardButton("Standard (₦9,000)", callback_data="coupon_standard")],
-                        [InlineKeyboardButton("X (₦14,000)", callback_data="coupon_x")],
+                        [InlineKeyboardButton("Standard (₦10,000)", callback_data="coupon_standard")],
+                        #[InlineKeyboardButton("X (₦14,000)", callback_data="coupon_x")],
                         [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
                     ]
                     await update.message.reply_text("Select the package for your coupons:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -980,7 +995,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         conn.commit()
                 await context.bot.send_message(
                     for_user,
-                    f"🎉 Registration successful! Your username is\n {username}\n and password is\n {password}\n\n Join the group using the link below to keep up with info:\n {GROUP_LINK}"
+                    f"🎉 Registration successful! Your username is\n {username}\n and password is\n {password}\n\n Join the group using the link below to access your Mentorship forum:\n {GROUP_LINK}"
                 )
                 cursor.execute("SELECT package, email, name, phone FROM users WHERE chat_id=%s", (for_user,))
                 user_details = cursor.fetchone()
@@ -1063,7 +1078,7 @@ async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
         user_ids = [row[0] for row in cursor.fetchall()]
         for user_id in user_ids:
             try:
-                await context.bot.send_message(user_id, "🌟 Daily Reminder: Complete your Ethereal tasks to maximize your earnings!")
+                await context.bot.send_message(user_id, "🌟 Daily Reminder: Complete your Tapify tasks to maximize your earnings!")
                 log_interaction(user_id, "daily_reminder")
             except Exception as e36:
                 logger.error(f"Failed to send reminder to {user_id}: {e36}")
@@ -1077,7 +1092,7 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
         cursor.execute("SELECT COUNT(*) FROM users WHERE registration_date >= %s", (start_time,))
         new_users = cursor.fetchone()[0]
         cursor.execute("""
-        SELECT SUM(CASE package WHEN 'Standard' THEN 9000 WHEN 'X' THEN 14000 ELSE 0 END)
+        SELECT SUM(CASE package WHEN 'Standard' THEN 10000 WHEN 'X' THEN 14000 ELSE 0 END)
         FROM users
         WHERE approved_at >= %s AND payment_status = 'registered'
         """, (start_time,))
@@ -1115,7 +1130,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("How It Works", callback_data="how_it_works")],
             [InlineKeyboardButton("Purchase Coupon", callback_data="coupon")],
-            [InlineKeyboardButton("💸 Register & Make Payment", callback_data="package_selector")],
+            [InlineKeyboardButton("💸 Get Registered", callback_data="package_selector")],
             [InlineKeyboardButton("❓ Help", callback_data="help")],
         ]
         if user and user[0] == 'registered':
