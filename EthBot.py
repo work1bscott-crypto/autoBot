@@ -425,7 +425,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             voice_keyboard = [
-        [InlineKeyboardButton("✅ I've listened...", callback_data="close_voice")]  # 👈 special button
+        [InlineKeyboardButton("✅ I've listened...", callback_data="close_voice")]
+			]# 👈 special button
         voice_markup = InlineKeyboardMarkup(voice_keyboard)
 
     # Send the voice note with buttons
@@ -436,7 +437,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="Tapify Explained 🎧",
             reply_markup=voice_markup
         )
-	]
 
             elif data == "close_voice":
     # Delete the entire message (voice + buttons)
