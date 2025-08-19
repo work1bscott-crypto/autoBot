@@ -429,13 +429,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			]# 👈 special button
         voice_markup = InlineKeyboardMarkup(voice_keyboard)
 		# Send the voice note with buttons
-		try:
-			with open("voice.ogg", "rb") as voice:
-				await context.bot.send_voice(
-					chat_id=query.message.chat_id,
-					voice=voice,
-					caption="Tapify Explained 🎧",
-					reply_markup=voice_markup
+        try:
+        	with open("voice.ogg", "rb") as voice:
+        		await context.bot.send_voice(
+        		chat_id=query.message.chat_id,
+        		voice=voice,
+        		caption="Tapify Explained 🎧",
+        		reply_markup=voice_markup
 	    	)
 		    # Wrap the file operation in a try-except block to handle potential errors
 	    except FileNotFoundError:
