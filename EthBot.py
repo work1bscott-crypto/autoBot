@@ -428,43 +428,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("✅ I've listened...", callback_data="close_voice")]
 			]# 👈 special button
         voice_markup = InlineKeyboardMarkup(voice_keyboard)
-		# Send the voice note with buttons
-        try:
-        	with open("voice.ogg", "rb") as voice:
-        		await context.bot.send_voice(
-        		chat_id=query.message.chat_id,
-        		voice=voice,
-        		caption="Tapify Explained 🎧",
-        		reply_markup=voice_markup
-	    	)
-		    # Wrap the file operation in a try-except block to handle potential errors
-		    except FileNotFoundError:
-		        logger.error("Voice file 'voice.ogg' not found")
-		       await context.bot.send_message(
-		         chat_id=query.message.chat_id,
-		         text="Error: Voice note file not found. Please contact support.",
-		         reply_markup=voice_markup
-	        )
-	        except Exception as e:
-	        	logger.error(f"Error sending voice note: {e}")
-	           await context.bot.send_message(
-	            chat_id=query.message.chat_id,
-	            text="An error occurred while sending the voice note. Please try again.",
-	            reply_markup=voice_markup
-	        )
-	        elif data == "close_voice":
-	               # Delete the entire message (voice + buttons)
-	               await query.message.delete()
-	               
-	        elif data == "coupon":
-	        	user_state[chat_id] = {'expecting': 'coupon_quantity'}
-	        	keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]
-	        	await query.edit_message_text(
-	        	"How many coupons do you want to purchase?",
-	        	reply_markup=InlineKeyboardMarkup(keyboard)
-	        )
-
-	# Handle only Standard coupons for now
+			# Send the voice note with buttons
+	        try:
+	        	with open("voice.ogg", "rb") as voice:
+	        		await context.bot.send_voice(
+	        		chat_id=query.message.chat_id,
+	        		voice=voice,
+	        		caption="Tapify Explained 🎧",
+	        		reply_markup=voice_markup
+		    	)
+			# Wrap the file operation in a try-except block to handle potential errors
+			except FileNotFoundError:
+			        logger.error("Voice file 'voice.ogg' not found")
+			       await context.bot.send_message(
+			         chat_id=query.message.chat_id,
+			         text="Error: Voice note file not found. Please contact support.",
+			         reply_markup=voice_markup
+		        )
+		    except Exception as e:
+		        	logger.error(f"Error sending voice note: {e}")
+		           await context.bot.send_message(
+		            chat_id=query.message.chat_id,
+		            text="An error occurred while sending the voice note. Please try again.",
+		            reply_markup=voice_markup
+		        )
+		        elif data == "close_voice":
+		               # Delete the entire message (voice + buttons)
+		               await query.message.delete()
+		               
+		        elif data == "coupon":
+		        	user_state[chat_id] = {'expecting': 'coupon_quantity'}
+		        	keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]
+		        	await query.edit_message_text(
+		        	"How many coupons do you want to purchase?",
+		        	reply_markup=InlineKeyboardMarkup(keyboard)
+		        )
+	
+		# Handle only Standard coupons for now
 	elif data == "coupon_standard":
 	    package = "Standard"
 	    price = 9000
