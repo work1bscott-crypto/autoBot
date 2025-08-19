@@ -3,5 +3,4 @@ python-telegram-bot[job-queue]==21.4
 Flask==3.0.3
 psycopg[binary]==3.2.2
 pydub>=0.25.1
-pyaudioop
-python3.12
+audioop-lts>=0.2.2
