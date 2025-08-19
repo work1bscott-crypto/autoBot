@@ -42,16 +42,16 @@ DAILY_TASK_LINK = os.getenv("DAILY_TASK_LINK")
 
 # Predefined payment accounts
 PAYMENT_ACCOUNTS = {
-    "Nigeria (Kuda)": "🇳🇬 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju",
+    "Nigeria (Opay)": "🇳🇬 Account: 6110749592\nBank: Kuda Bank\nName: Chike Eluem Olanrewaju",
     "Nigeria (Zenith)": "🇳🇬 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
-    "Nigeria (OPay)": "🇳🇬 Account: 8051454564\nBank: OPay\nName: Chike Eluem Olanrewaju",
+    "Nigeria (Kuda)": "🇳🇬 Account: 2036035854\nBank: OPay\nName: Eluem, Chike Olanrewaju",
 }
 
 # Predefined coupon payment accounts
 COUPON_PAYMENT_ACCOUNTS = {
-    "Coupon Acct 1 (Kuda)": "🇳🇬 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju",
+    "Coupon Acct 1 (Opay)": "🇳🇬 Account: 6110749592\nBank: Kuda Bank\nName: Chike Eluem Olanrewaju",
     "Coupon Acct 2 (Zenith)": "🇳🇬 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
-    "Coupon Acct 3 (OPay)": "🇳🇬 Account: 8051454564\nBank: OPay\nName: Chike Eluem Olanrewaju"
+    "Coupon Acct 3 (Kuda)": "🇳🇬 Account: 2036035854\nBank: OPay\nName: Eluem, Chike Olanrewaju"
 }
 
 # Predefined FAQs
@@ -460,7 +460,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         elif data == "coupon_standard":
             package = "Standard"
-            price = 9000
+            price = 10000
             quantity = user_state[chat_id]['coupon_quantity']
             total = quantity * price
             user_state[chat_id].update({'coupon_package': package, 'coupon_total': total})
@@ -500,6 +500,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         #         f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
         #         reply_markup=InlineKeyboardMarkup(keyboard)
         #     )
+        elif data.startswith("coupon_account_"):
+            account = data[len("coupon_account_"):]
+            payment_details = COUPON_PAYMENT_ACCOUNTS.get(account)
+            if not payment_details:
+                await context.bot.send_message(chat_id, "Error: Invalid account. Contact @bigscottmedia.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
+                return
+            user_state[chat_id]['selected_account'] = account
+            user_state[chat_id]['expecting'] = 'coupon_screenshot'
+            package = user_state[chat_id]['coupon_package']
+            quantity = user_state[chat_id]['coupon_quantity']
+            total = user_state[chat_id]['coupon_total']
+            cursor.execute(
+                "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (chat_id, 'coupon', package, quantity, total, account, 'pending_payment')
+            )
+            payment_id = cursor.fetchone()[0]
+            conn.commit()
+            user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
+            keyboard = [
+                [InlineKeyboardButton("Change Account", callback_data="show_coupon_account_selection")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
+            ]
+            await context.bot.send_message(
+                chat_id,
+                f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        elif data == "show_coupon_account_selection":
+            keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
+            keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
+            keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
+            await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
+        elif data == "coupon_other":
+            await context.bot.send_message(
+                chat_id,
+                "Please contact @bigscottmedia to complete your payment for other region coupon purchase.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
+            )
         elif data == "package_selector":
             status = get_status(chat_id)
             if status == 'registered':
@@ -850,7 +888,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'expecting' not in user_state.get(chat_id, {}):
         return
     expecting = user_state[chat_id]['expecting']
-    photo_file = update.message.photo[-1].file_id
+    file_id = update.message.photo[-1].file_id
+    logger.info(f"Processing photo for {expecting}")
     try:
         if expecting == 'reg_screenshot':
             cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
@@ -861,7 +900,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await context.bot.send_photo(
                 ADMIN_ID,
-                photo_file,
+                file_id,
                 caption=f"📸 Registration Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -876,7 +915,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await context.bot.send_photo(
                 ADMIN_ID,
-                photo_file,
+                file_id,
                 caption=f"📸 Coupon Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -886,7 +925,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             task_id = user_state[chat_id]['task_id']
             await context.bot.send_photo(
                 ADMIN_ID,
-                photo_file,
+                file_id,
                 caption=f"Task #{task_id} verification from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("Approve", callback_data=f"approve_task_{task_id}_{chat_id}")],
@@ -898,6 +937,66 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_interaction(chat_id, "photo_upload")
     except Exception as e:
         logger.error(f"Error in handle_photo: {e}")
+        await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    if 'expecting' not in user_state.get(chat_id, {}):
+        return
+    expecting = user_state[chat_id]['expecting']
+    file_id = update.message.document.file_id
+    mime_type = update.message.document.mime_type
+    if not mime_type.startswith('image/'):
+        await update.message.reply_text("Please send an image file (e.g., PNG, JPG).")
+        return
+    logger.info(f"Processing document for {expecting}")
+    try:
+        if expecting == 'reg_screenshot':
+            cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
+            conn.commit()
+            keyboard = [
+                [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
+                [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
+            ]
+            await context.bot.send_document(
+                ADMIN_ID,
+                file_id,
+                caption=f"📸 Registration Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            await update.message.reply_text("✅ Screenshot received! Awaiting admin approval.")
+            user_state[chat_id]['waiting_approval'] = {'type': 'registration'}
+            context.job_queue.run_once(check_registration_payment, 3600, data={'chat_id': chat_id})
+        elif expecting == 'coupon_screenshot':
+            payment_id = user_state[chat_id]['waiting_approval']['payment_id']
+            keyboard = [
+                [InlineKeyboardButton("Approve", callback_data=f"approve_coupon_{payment_id}")],
+                [InlineKeyboardButton("Pending", callback_data=f"pending_coupon_{payment_id}")],
+            ]
+            await context.bot.send_document(
+                ADMIN_ID,
+                file_id,
+                caption=f"📸 Coupon Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            await update.message.reply_text("✅ Screenshot received! Awaiting admin approval.")
+            context.job_queue.run_once(check_coupon_payment, 3600, data={'payment_id': payment_id})
+        elif expecting == 'task_screenshot':
+            task_id = user_state[chat_id]['task_id']
+            await context.bot.send_document(
+                ADMIN_ID,
+                file_id,
+                caption=f"Task #{task_id} verification from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Approve", callback_data=f"approve_task_{task_id}_{chat_id}")],
+                    [InlineKeyboardButton("Reject", callback_data=f"reject_task_{task_id}_{chat_id}")]
+                ])
+            )
+            await update.message.reply_text("Screenshot received. Awaiting admin approval.")
+        del user_state[chat_id]['expecting']
+        log_interaction(chat_id, "document_upload")
+    except Exception as e:
+        logger.error(f"Error in handle_document: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1175,6 +1274,7 @@ def main():
         application.add_handler(CommandHandler("add_task", add_task))
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        application.add_handler(MessageHandler(filters.DOCUMENT, handle_document))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         # Add job queue tasks
         application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
