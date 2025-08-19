@@ -1274,7 +1274,7 @@ def main():
         application.add_handler(CommandHandler("add_task", add_task))
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        application.add_handler(MessageHandler(filters.DOCUMENT, handle_document))
+        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         # Add job queue tasks
         application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
