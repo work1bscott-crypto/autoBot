@@ -436,6 +436,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="Tapify Explained 🎧",
             reply_markup=voice_markup
         )
+	]
 
             elif data == "close_voice":
     # Delete the entire message (voice + buttons)
