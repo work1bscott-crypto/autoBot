@@ -5,7 +5,7 @@ import time
 import secrets
 import datetime
 import os
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -39,6 +39,7 @@ GROUP_LINK = os.getenv("GROUP_LINK")
 SITE_LINK = os.getenv("SITE_LINK")
 AI_BOOST_LINK = os.getenv("AI_BOOST_LINK")
 DAILY_TASK_LINK = os.getenv("DAILY_TASK_LINK")
+WEBAPP_URL = "https://tapify.onrender.com/app"
 
 # Predefined payment accounts
 PAYMENT_ACCOUNTS = {
@@ -215,6 +216,15 @@ def get_status(chat_id):
         logger.error(f"Database error in get_status: {e}")
         return None
 
+def is_registered(chat_id):
+    try:
+        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        row = cursor.fetchone()
+        return row and row[0] == 'registered'
+    except psycopg.Error as e:
+        logger.error(f"Database error in is_registered: {e}")
+        return False
+
 def log_interaction(chat_id, action):
     try:
         cursor.execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
@@ -258,9 +268,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     reply_keyboard = [["/menu(🔙)"]]
+    if is_registered(chat_id):
+        reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))])
     await update.message.reply_text(
         "Use the button below 'ONLY' if you get stuck on a process:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+
+async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_user.id
+    if not is_registered(chat_id):
+        await update.message.reply_text("Please complete registration to play the game.")
+        return
+    kb = [[KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
+    await update.message.reply_text(
+        "Tap to earn coins!",
+        reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
     )
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -479,27 +502,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        # elif data == "coupon_x":
-        #     package = "X"
-        #     price = 14000
-        #     quantity = user_state[chat_id]['coupon_quantity']
-        #     total = quantity * price
-        #     user_state[chat_id].update({'coupon_package': package, 'coupon_total': total})
-        #
-        #     await context.bot.send_message(
-        #         ADMIN_ID,
-        #         f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) "
-        #         f"wants to purchase {quantity} {package} coupons for ₦{total}."
-        #     )
-        #
-        #     keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
-        #     keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
-        #     keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-        #
-        #     await query.edit_message_text(
-        #         f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
-        #         reply_markup=InlineKeyboardMarkup(keyboard)
-        #     )
         elif data.startswith("coupon_account_"):
             account = data[len("coupon_account_"):]
             payment_details = COUPON_PAYMENT_ACCOUNTS.get(account)
@@ -544,7 +546,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id, "You are already registered.")
                 return
             keyboard = [
-                #[InlineKeyboardButton("🚀X (₦14,000)", callback_data="reg_x")],
                 [InlineKeyboardButton("✈️Standard (₦10,000)", callback_data="reg_standard")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
             ]
@@ -1015,7 +1016,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_state[chat_id]['coupon_quantity'] = quantity
                     keyboard = [
                         [InlineKeyboardButton("Standard (₦10,000)", callback_data="coupon_standard")],
-                        #[InlineKeyboardButton("X (₦14,000)", callback_data="coupon_x")],
                         [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
                     ]
                     await update.message.reply_text("Select the package for your coupons:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1106,6 +1106,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
                 ]
                 await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
+                await context.bot.send_message(
+                    for_user,
+                    "Use the button below 'ONLY' if you get stuck on a process:",
+                    reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+                )
                 del user_state[chat_id]
         except Exception as e:
             logger.error(f"Error in handle_text: {e}")
@@ -1239,10 +1245,23 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user[1] == "X":
                 keyboard.insert(1, [InlineKeyboardButton("🚀 Boost with AI", callback_data="boost_ai")])
         text = "Select an option below:"
+        reply_keyboard = [["/menu(🔙)"]]
+        if user and user[0] == 'registered':
+            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))])
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await context.bot.send_message(
+                chat_id,
+                "Use the button below 'ONLY' if you get stuck on a process:",
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            )
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await context.bot.send_message(
+                chat_id,
+                "Use the button below 'ONLY' if you get stuck on a process:",
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            )
         log_interaction(chat_id, "show_main_menu")
     except psycopg.Error as e:
         logger.error(f"Database error in show_main_menu: {e}")
@@ -1267,6 +1286,7 @@ def main():
         # Add handlers
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("menu", show_main_menu))
+        application.add_handler(CommandHandler("game", cmd_game))
         application.add_handler(CommandHandler("stats", stats))
         application.add_handler(CommandHandler("reset", reset_state))
         application.add_handler(CommandHandler("support", support))
