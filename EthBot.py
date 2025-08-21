@@ -99,6 +99,8 @@ try:
 
     url = os.getenv("DATABASE_URL")
     result = urlparse.urlparse(url)
+    if not url:
+        raise ValueError("DATABASE_URL must be set for PostgreSQL")
     conn = psycopg.connect(
         dbname=result.path[1:],
         user=result.username,
@@ -222,7 +224,7 @@ def is_registered(chat_id):
         row = cursor.fetchone()
         return row and row[0] == 'registered'
     except psycopg.Error as e:
-        logger.error(f"Database error in is_registered: {e}")
+        logger.error(f"Database error in is_registered {chat_id}: {e}")
         return False
 
 def log_interaction(chat_id, action):
