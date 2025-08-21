@@ -1,5 +1,5 @@
 import logging
-import psycopg  # Changed from psycopg2 to psycopg3
+import psycopg
 import re
 import time
 import secrets
@@ -98,9 +98,9 @@ try:
     import urllib.parse as urlparse
 
     url = os.getenv("DATABASE_URL")
-    result = urlparse.urlparse(url)
     if not url:
         raise ValueError("DATABASE_URL must be set for PostgreSQL")
+    result = urlparse.urlparse(url)
     conn = psycopg.connect(
         dbname=result.path[1:],
         user=result.username,
@@ -109,10 +109,67 @@ try:
         port=result.port,
         sslmode='require'
     )
-    cursor = conn.cursor()
+    conn.autocommit = True  # Enable autocommit for consistency
+    cursor = conn.cursor(row_factory=psycopg.rows.dict_row)  # Use dict_row for consistency with game code
+except psycopg.Error as e:
+    logging.error(f"Database error during initialization: {e}")
+    raise
 
-    # Users table
-    cursor.execute("""
+# Database reconnection logic
+def reconnect_db():
+    global conn, cursor
+    try:
+        if conn.closed:
+            result = urlparse.urlparse(os.getenv("DATABASE_URL"))
+            conn = psycopg.connect(
+                dbname=result.path[1:],
+                user=result.username,
+                password=result.password,
+                host=result.hostname,
+                port=result.port,
+                sslmode='require'
+            )
+            conn.autocommit = True
+            cursor = conn.cursor(row_factory=psycopg.rows.dict_row)
+            logging.info("Database reconnected successfully")
+    except psycopg.Error as e:
+        logging.error(f"Database reconnection failed: {e}")
+        raise
+
+# Database execute with reconnection
+def db_execute(query: str, params: tuple = ()):
+    try:
+        cursor.execute(query, params)
+        logging.debug(f"DB execute: {query} with params {params}")
+    except psycopg.OperationalError as e:
+        logging.warning(f"Database connection error, attempting reconnect: {e}")
+        reconnect_db()
+        cursor.execute(query, params)
+    except psycopg.Error as e:
+        logging.error(f"DB execute failed: {query} | Error: {e}")
+        raise
+
+# Database fetchone with reconnection
+def db_fetchone(query: str, params: tuple = ()):
+    try:
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        logging.debug(f"DB fetchone: {query} with params {params} -> {result}")
+        return result
+    except psycopg.OperationalError as e:
+        logging.warning(f"Database connection error, attempting reconnect: {e}")
+        reconnect_db()
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        logging.debug(f"DB fetchone after reconnect: {query} with params {params} -> {result}")
+        return result
+    except psycopg.Error as e:
+        logging.error(f"DB fetchone failed: {query} | Error: {e}")
+        raise
+
+# Initialize database tables
+try:
+    db_execute("""
         CREATE TABLE IF NOT EXISTS users (
             chat_id BIGINT PRIMARY KEY,
             package TEXT,
@@ -134,9 +191,7 @@ try:
             referred_by BIGINT
         )
     """)
-
-    # Payments table
-    cursor.execute("""
+    db_execute("""
         CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
             chat_id BIGINT,
@@ -150,9 +205,7 @@ try:
             approved_at TIMESTAMP
         )
     """)
-
-    # Coupons table
-    cursor.execute("""
+    db_execute("""
         CREATE TABLE IF NOT EXISTS coupons (
             id SERIAL PRIMARY KEY,
             payment_id INTEGER,
@@ -160,9 +213,7 @@ try:
             FOREIGN KEY (payment_id) REFERENCES payments(id)
         )
     """)
-
-    # Interactions table
-    cursor.execute("""
+    db_execute("""
         CREATE TABLE IF NOT EXISTS interactions (
             id SERIAL PRIMARY KEY,
             chat_id BIGINT,
@@ -170,9 +221,7 @@ try:
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-
-    # Tasks table
-    cursor.execute("""
+    db_execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
             type TEXT,
@@ -182,9 +231,7 @@ try:
             expires_at TIMESTAMP
         )
     """)
-
-    # User_tasks table
-    cursor.execute("""
+    db_execute("""
         CREATE TABLE IF NOT EXISTS user_tasks (
             user_id BIGINT,
             task_id INTEGER,
@@ -194,10 +241,8 @@ try:
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
-
-    conn.commit()
 except psycopg.Error as e:
-    logging.error(f"Database error: {e}")
+    logging.error(f"Database table creation error: {e}")
     raise
 
 # In-memory storage
@@ -211,28 +256,33 @@ logger = logging.getLogger(__name__)
 # Helper functions
 def get_status(chat_id):
     try:
-        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
-        row = cursor.fetchone()
-        return row[0] if row else None
+        row = db_fetchone("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        status = row['payment_status'] if row else None
+        logging.info(f"get_status for chat_id {chat_id}: {status}")
+        return status
     except psycopg.Error as e:
-        logger.error(f"Database error in get_status: {e}")
+        logger.error(f"Database error in get_status for chat_id {chat_id}: {e}")
         return None
 
 def is_registered(chat_id):
     try:
-        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
-        row = cursor.fetchone()
-        return row and row[0] == 'registered'
+        row = db_fetchone("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        if not row:
+            logger.warning(f"No user found for chat_id {chat_id} in is_registered")
+            return False
+        status = str(row['payment_status'] or '').lower()
+        is_reg = status == 'registered'
+        logger.info(f"is_registered for chat_id {chat_id}: status={status}, is_registered={is_reg}")
+        return is_reg
     except psycopg.Error as e:
-        logger.error(f"Database error in is_registered {chat_id}: {e}")
+        logger.error(f"Database error in is_registered for chat_id {chat_id}: {e}")
         return False
 
 def log_interaction(chat_id, action):
     try:
-        cursor.execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
-        conn.commit()
+        db_execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
     except psycopg.Error as e:
-        logger.error(f"Database error in log_interaction: {e}")
+        logger.error(f"Database error in log_interaction for chat_id {chat_id}: {e}")
 
 def generate_referral_code():
     return secrets.token_urlsafe(6)
@@ -244,21 +294,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     referred_by = None
     if args and args[0].startswith("ref_"):
-        referred_by = int(args[0].split("_")[1])
+        try:
+            referred_by = int(args[0].split("_")[1])
+        except ValueError:
+            logger.warning(f"Invalid referral code format: {args[0]}")
     log_interaction(chat_id, "start")
     try:
-        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
-        if not cursor.fetchone():
-            cursor.execute(
-                "INSERT INTO users (chat_id, username, referral_code, referred_by) VALUES (%s, %s, %s, %s)",
-                (chat_id, update.effective_user.username or "Unknown", referral_code, referred_by)
+        row = db_fetchone("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        if not row:
+            db_execute(
+                "INSERT INTO users (chat_id, username, referral_code, referred_by, payment_status) VALUES (%s, %s, %s, %s, %s)",
+                (chat_id, update.effective_user.username or "Unknown", referral_code, referred_by, 'new')
             )
-            conn.commit()
             if referred_by:
-                cursor.execute("UPDATE users SET invites = invites + 1, balance = balance + 0.1 WHERE chat_id=%s", (referred_by,))
-                conn.commit()
+                db_execute("UPDATE users SET invites = invites + 1, balance = balance + 0.1 WHERE chat_id=%s", (referred_by,))
+        else:
+            logger.info(f"User {chat_id} already exists with status {row['payment_status']}")
     except psycopg.Error as e:
-        logger.error(f"Database error in start: {e}")
+        logger.error(f"Database error in start for chat_id {chat_id}: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
         return
     keyboard = [[InlineKeyboardButton("🚀 Get Started", callback_data="menu")]]
@@ -298,15 +351,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     log_interaction(chat_id, "stats")
     try:
-        cursor.execute("SELECT payment_status, streaks, invites, package, balance FROM users WHERE chat_id=%s", (chat_id,))
-        user = cursor.fetchone()
-        if not user:
+        row = db_fetchone("SELECT payment_status, streaks, invites, package, balance FROM users WHERE chat_id=%s", (chat_id,))
+        if not row:
             if update.callback_query:
                 await update.callback_query.answer("No user data found. Please start with /start.")
             else:
                 await update.message.reply_text("No user data found. Please start with /start.")
             return
-        payment_status, streaks, invites, package, balance = user
+        payment_status, streaks, invites, package, balance = row['payment_status'], row['streaks'], row['invites'], row['package'], row['balance']
         text = (
             "📊 Your Platform Stats:\n\n"
             f"• Package: {package or 'Not selected'}\n"
@@ -324,7 +376,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     except psycopg.Error as e:
-        logger.error(f"Database error in stats: {e}")
+        logger.error(f"Database error in stats for chat_id {chat_id}: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
 
 async def reset_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -352,15 +404,14 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     created_at = datetime.datetime.now()
     expires_at = created_at + datetime.timedelta(days=1)
     try:
-        cursor.execute(
+        db_execute(
             "INSERT INTO tasks (type, link, reward, created_at, expires_at) VALUES (%s, %s, %s, %s, %s)",
             (task_type, link, reward, created_at, expires_at)
         )
-        conn.commit()
         await update.message.reply_text("Task added successfully.")
         log_interaction(chat_id, "add_task")
     except psycopg.Error as e:
-        logger.error(f"Database error in add_task: {e}")
+        logger.error(f"Database error in add_task for chat_id {chat_id}: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -389,8 +440,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "stats":
             await stats(update, context)
         elif data == "refer_friend":
-            cursor.execute("SELECT referral_code FROM users WHERE chat_id=%s", (chat_id,))
-            referral_code = cursor.fetchone()[0]
+            row = db_fetchone("SELECT referral_code FROM users WHERE chat_id=%s", (chat_id,))
+            referral_code = row['referral_code'] if row else generate_referral_code()
             referral_link = f"https://t.me/{context.bot.username}?start=ref_{chat_id}"
             text = (
                 "👥 Refer a Friend and Earn Rewards!\n\n"
@@ -400,8 +451,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
         elif data == "withdraw":
-            cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
-            balance = cursor.fetchone()[0]
+            row = db_fetchone("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
+            balance = row['balance'] if row else 0
             if balance < 30:
                 await query.answer("Your balance is less than $30.")
                 return
@@ -515,22 +566,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             package = user_state[chat_id]['coupon_package']
             quantity = user_state[chat_id]['coupon_quantity']
             total = user_state[chat_id]['coupon_total']
-            cursor.execute(
-                "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (chat_id, 'coupon', package, quantity, total, account, 'pending_payment')
-            )
-            payment_id = cursor.fetchone()[0]
-            conn.commit()
-            user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
-            keyboard = [
-                [InlineKeyboardButton("Change Account", callback_data="show_coupon_account_selection")],
-                [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
-            ]
-            await context.bot.send_message(
-                chat_id,
-                f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            try:
+                db_execute(
+                    "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (chat_id, 'coupon', package, quantity, total, account, 'pending_payment')
+                )
+                payment_id = db_fetchone("SELECT id FROM payments WHERE chat_id=%s ORDER BY timestamp DESC LIMIT 1", (chat_id,))['id']
+                user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
+                keyboard = [
+                    [InlineKeyboardButton("Change Account", callback_data="show_coupon_account_selection")],
+                    [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
+                ]
+                await context.bot.send_message(
+                    chat_id,
+                    f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except psycopg.Error as e:
+                logger.error(f"Database error in coupon_account for chat_id {chat_id}: {e}")
+                await context.bot.send_message(chat_id, "An error occurred. Please try again.")
         elif data == "show_coupon_account_selection":
             keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
@@ -556,18 +610,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             package = "Standard" if data == "reg_standard" else "X"
             user_state[chat_id] = {'package': package}
             try:
-                cursor.execute("UPDATE users SET package=%s, payment_status='pending_payment' WHERE chat_id=%s", (package, chat_id))
-                if cursor.rowcount == 0:
-                    cursor.execute("INSERT INTO users (chat_id, package, payment_status, username) VALUES (%s, %s, 'pending_payment', %s)", (chat_id, package, update.effective_user.username or "Unknown"))
-                conn.commit()
+                row = db_fetchone("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+                if not row:
+                    db_execute(
+                        "INSERT INTO users (chat_id, package, payment_status, username) VALUES (%s, %s, %s, %s)",
+                        (chat_id, package, 'pending_payment', update.effective_user.username or "Unknown")
+                    )
+                else:
+                    db_execute("UPDATE users SET package=%s, payment_status='pending_payment' WHERE chat_id=%s", (package, chat_id))
                 keyboard = [[InlineKeyboardButton(a, callback_data=f"reg_account_{a}")] for a in PAYMENT_ACCOUNTS.keys()]
                 keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
                 keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
                 await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
             except psycopg.Error as e:
-                logger.error(f"Database error in package_selector: {e}")
+                logger.error(f"Database error in package_selector for chat_id {chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
-                return
         elif data.startswith("reg_account_"):
             account = data[len("reg_account_"):]
             payment_details = PAYMENT_ACCOUNTS.get(account)
@@ -605,8 +662,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if parts[1] == "reg":
                 user_chat_id = int(parts[2])
                 try:
-                    cursor.execute("UPDATE users SET payment_status='pending_details', approved_at=%s WHERE chat_id=%s", (datetime.datetime.now(), user_chat_id))
-                    conn.commit()
+                    db_execute("UPDATE users SET payment_status='pending_details', approved_at=%s WHERE chat_id=%s", (datetime.datetime.now(), user_chat_id))
                     await context.bot.send_message(
                         user_chat_id,
                         "✅ Your payment is approved!\n\n*KINDLY 🎯 SEND YOUR DETAILS FOR YOUR REGISTRATION*\n"
@@ -616,32 +672,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await query.edit_message_text("Payment approved. Waiting for user details.")
                 except psycopg.Error as e:
-                    logger.error(f"Database error in approve_reg: {e}")
+                    logger.error(f"Database error in approve_reg for chat_id {user_chat_id}: {e}")
                     await query.edit_message_text("An error occurred. Please try again.")
             elif parts[1] == "coupon":
                 payment_id = int(parts[2])
                 try:
-                    cursor.execute("UPDATE payments SET status='approved', approved_at=%s WHERE id=%s", (datetime.datetime.now(), payment_id))
-                    conn.commit()
+                    db_execute("UPDATE payments SET status='approved', approved_at=%s WHERE id=%s", (datetime.datetime.now(), payment_id))
                     user_state[ADMIN_ID] = {'expecting': {'type': 'coupon_codes', 'payment_id': payment_id}}
                     await context.bot.send_message(ADMIN_ID, f"Payment {payment_id} approved. Please send the coupon codes (one per line).")
                     await query.edit_message_text("Payment approved. Waiting for coupon codes.")
                 except psycopg.Error as e:
-                    logger.error(f"Database error in approve_coupon: {e}")
+                    logger.error(f"Database error in approve_coupon for payment_id {payment_id}: {e}")
                     await query.edit_message_text("An error occurred. Please try again.")
             elif parts[1] == "task":
                 task_id = int(parts[2])
                 user_chat_id = int(parts[3])
                 try:
-                    cursor.execute("INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES (%s, %s, %s)", (user_chat_id, task_id, datetime.datetime.now()))
-                    cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
-                    reward = cursor.fetchone()[0]
-                    cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (reward, user_chat_id))
-                    conn.commit()
+                    db_execute("INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES (%s, %s, %s)", (user_chat_id, task_id, datetime.datetime.now()))
+                    row = db_fetchone("SELECT reward FROM tasks WHERE id=%s", (task_id,))
+                    reward = row['reward'] if row else 0
+                    db_execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (reward, user_chat_id))
                     await context.bot.send_message(user_chat_id, f"Task approved! You earned ${reward}.")
                     await query.edit_message_text("Task approved and reward awarded.")
                 except psycopg.Error as e:
-                    logger.error(f"Database error in approve_task: {e}")
+                    logger.error(f"Database error in approve_task for task_id {task_id}, chat_id {user_chat_id}: {e}")
                     await query.edit_message_text("An error occurred. Please try again.")
         elif data.startswith("finalize_reg_"):
             user_chat_id = int(data.split("_")[2])
@@ -656,20 +710,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             task_id = int(parts[2])
             user_chat_id = int(parts[3])
             try:
-                cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (user_chat_id,))
-                balance = cursor.fetchone()[0]
-                cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
-                reward = cursor.fetchone()[0]
+                row = db_fetchone("SELECT balance FROM users WHERE chat_id=%s", (user_chat_id,))
+                balance = row['balance'] if row else 0
+                row = db_fetchone("SELECT reward FROM tasks WHERE id=%s", (task_id,))
+                reward = row['reward'] if row else 0
                 if balance >= reward:
-                    cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (reward, user_chat_id))
-                    cursor.execute("DELETE FROM user_tasks WHERE user_id=%s AND task_id=%s", (user_chat_id, task_id))
-                    conn.commit()
+                    db_execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (reward, user_chat_id))
+                    db_execute("DELETE FROM user_tasks WHERE user_id=%s AND task_id=%s", (user_chat_id, task_id))
                     await context.bot.send_message(user_chat_id, "Task verification rejected. Reward revoked.")
                     await query.edit_message_text("Task rejected and reward removed.")
                 else:
                     await query.edit_message_text("Task rejected, but balance insufficient to revoke reward.")
             except psycopg.Error as e:
-                logger.error(f"Database error in reject_task: {e}")
+                logger.error(f"Database error in reject_task for task_id {task_id}, chat_id {user_chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data.startswith("pending_"):
             parts = data.split("_")
@@ -678,11 +731,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif parts[1] == "coupon":
                 payment_id = int(parts[2])
                 try:
-                    cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
-                    user_chat_id = cursor.fetchone()[0]
-                    await context.bot.send_message(user_chat_id, "Your coupon payment is still being reviewed.")
+                    row = db_fetchone("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
+                    user_chat_id = row['chat_id'] if row else None
+                    if user_chat_id:
+                        await context.bot.send_message(user_chat_id, "Your coupon payment is still being reviewed.")
+                    else:
+                        await query.edit_message_text("Payment not found.")
                 except psycopg.Error as e:
-                    logger.error(f"Database error in pending_coupon: {e}")
+                    logger.error(f"Database error in pending_coupon for payment_id {payment_id}: {e}")
                     await query.edit_message_text("An error occurred. Please try again.")
         elif data == "check_approval":
             if 'waiting_approval' not in user_state.get(chat_id, {}):
@@ -700,26 +756,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif approval['type'] == 'coupon':
                 payment_id = approval['payment_id']
                 try:
-                    cursor.execute("SELECT status FROM payments WHERE id=%s", (payment_id,))
-                    status = cursor.fetchone()[0]
+                    row = db_fetchone("SELECT status FROM payments WHERE id=%s", (payment_id,))
+                    status = row['status'] if row else 'pending_payment'
                     if status == 'approved':
                         await context.bot.send_message(chat_id, "Coupon payment approved. Check your coupons above.")
                     else:
                         await context.bot.send_message(chat_id, "Your coupon payment is being reviewed.")
                 except psycopg.Error as e:
-                    logger.error(f"Database error in check_approval: {e}")
+                    logger.error(f"Database error in check_approval for payment_id {payment_id}: {e}")
                     await context.bot.send_message(chat_id, "An error occurred. Please try again.")
         elif data == "toggle_reminder":
             try:
-                cursor.execute("SELECT alarm_setting FROM users WHERE chat_id=%s", (chat_id,))
-                current_setting = cursor.fetchone()[0]
+                row = db_fetchone("SELECT alarm_setting FROM users WHERE chat_id=%s", (chat_id,))
+                current_setting = row['alarm_setting'] if row else 0
                 new_setting = 1 if current_setting == 0 else 0
-                cursor.execute("UPDATE users SET alarm_setting=%s WHERE chat_id=%s", (new_setting, chat_id))
-                conn.commit()
+                db_execute("UPDATE users SET alarm_setting=%s WHERE chat_id=%s", (new_setting, chat_id))
                 status = "enabled" if new_setting == 1 else "disabled"
                 await query.edit_message_text(f"Daily reminder {status}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
             except psycopg.Error as e:
-                logger.error(f"Database error in toggle_reminder: {e}")
+                logger.error(f"Database error in toggle_reminder for chat_id {chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "boost_ai":
             await query.edit_message_text(
@@ -728,10 +783,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         elif data == "user_registered":
             try:
-                cursor.execute("SELECT username, email, password, package FROM users WHERE chat_id=%s", (chat_id,))
-                user = cursor.fetchone()
-                if user:
-                    username, email, password, package = user
+                row = db_fetchone("SELECT username, email, password, package FROM users WHERE chat_id=%s", (chat_id,))
+                if row:
+                    username, email, password, package = row['username'], row['email'], row['password'], row['package']
                     await query.edit_message_text(
                         f"🎉 Registration Complete!\n\n"
                         f"• Site: {SITE_LINK}\n"
@@ -744,18 +798,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await query.edit_message_text("No registration data found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
             except psycopg.Error as e:
-                logger.error(f"Database error in user_registered: {e}")
+                logger.error(f"Database error in user_registered for chat_id {chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "daily_tasks":
             try:
-                cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
-                package = cursor.fetchone()[0]
+                row = db_fetchone("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
+                package = row['package'] if row else None
                 msg = f"Follow this link to perform your daily tasks and earn: {DAILY_TASK_LINK}"
                 if package == "X":
                     msg = f"🌟 X Users: Maximize your earnings with this special daily task link: {DAILY_TASK_LINK}"
                 await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
             except psycopg.Error as e:
-                logger.error(f"Database error in daily_tasks: {e}")
+                logger.error(f"Database error in daily_tasks for chat_id {chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "earn_extra":
             now = datetime.datetime.now()
@@ -858,31 +912,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await help_menu(update, context)
         elif data == "enable_reminders":
             try:
-                cursor.execute("UPDATE users SET alarm_setting=1 WHERE chat_id=%s", (chat_id,))
-                conn.commit()
+                db_execute("UPDATE users SET alarm_setting=1 WHERE chat_id=%s", (chat_id,))
                 await query.edit_message_text(
                     "✅ Daily reminders enabled!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
                 )
             except psycopg.Error as e:
-                logger.error(f"Database error in enable_reminders: {e}")
+                logger.error(f"Database error in enable_reminders for chat_id {chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "disable_reminders":
             try:
-                cursor.execute("UPDATE users SET alarm_setting=0 WHERE chat_id=%s", (chat_id,))
-                conn.commit()
+                db_execute("UPDATE users SET alarm_setting=0 WHERE chat_id=%s", (chat_id,))
                 await query.edit_message_text(
                     "❌ Okay, daily reminders not set.",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
                 )
             except psycopg.Error as e:
-                logger.error(f"Database error in disable_reminders: {e}")
+                logger.error(f"Database error in disable_reminders for chat_id {chat_id}: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
         else:
             logger.warning(f"Unknown callback data: {data}")
             await query.edit_message_text("Unknown action. Please try again or contact @bigscottmedia.")
     except Exception as e:
-        logger.error(f"Error in button_handler: {e}")
+        logger.error(f"Error in button_handler for chat_id {chat_id}: {e}")
         await query.edit_message_text("An error occurred. Please try again or contact @bigscottmedia.")
 
 # Message handlers
@@ -892,11 +944,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     expecting = user_state[chat_id]['expecting']
     file_id = update.message.photo[-1].file_id
-    logger.info(f"Processing photo for {expecting}")
+    logger.info(f"Processing photo for {expecting} for chat_id {chat_id}")
     try:
         if expecting == 'reg_screenshot':
-            cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
-            conn.commit()
+            db_execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
@@ -939,7 +990,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_state[chat_id]['expecting']
         log_interaction(chat_id, "photo_upload")
     except Exception as e:
-        logger.error(f"Error in handle_photo: {e}")
+        logger.error(f"Error in handle_photo for chat_id {chat_id}: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -952,11 +1003,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mime_type.startswith('image/'):
         await update.message.reply_text("Please send an image file (e.g., PNG, JPG).")
         return
-    logger.info(f"Processing document for {expecting}")
+    logger.info(f"Processing document for {expecting} for chat_id {chat_id}")
     try:
         if expecting == 'reg_screenshot':
-            cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
-            conn.commit()
+            db_execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
@@ -999,7 +1049,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_state[chat_id]['expecting']
         log_interaction(chat_id, "document_upload")
     except Exception as e:
-        logger.error(f"Error in handle_document: {e}")
+        logger.error(f"Error in handle_document for chat_id {chat_id}: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1029,13 +1079,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Thank you! We’ll get back to you soon.")
                 del user_state[chat_id]['expecting']
             elif expecting == 'password_recovery':
-                cursor.execute("SELECT username, email, password FROM users WHERE email=%s AND chat_id=%s AND payment_status='registered'", (text, chat_id))
-                user = cursor.fetchone()
-                if user:
-                    username, email, _ = user
+                row = db_fetchone("SELECT username, email, password FROM users WHERE email=%s AND chat_id=%s AND payment_status='registered'", (text, chat_id))
+                if row:
+                    username, email, _ = row['username'], row['email'], row['password']
                     new_password = secrets.token_urlsafe(8)
-                    cursor.execute("UPDATE users SET password=%s WHERE chat_id=%s", (new_password, chat_id))
-                    conn.commit()
+                    db_execute("UPDATE users SET password=%s WHERE chat_id=%s", (new_password, chat_id))
                     await context.bot.send_message(
                         chat_id,
                         f"Your password has been reset.\nNew Password: {new_password}\nKeep it safe and use 'Password Recovery' if needed again."
@@ -1060,15 +1108,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for code in codes:
                     code = code.strip()
                     if code:
-                        cursor.execute("INSERT INTO coupons (payment_id, code) VALUES (%s, %s)", (payment_id, code))
-                conn.commit()
-                cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
-                user_chat_id = cursor.fetchone()[0]
-                await context.bot.send_message(
-                    user_chat_id,
-                    "🎉 Your coupon purchase is approved!\n\nHere are your coupons:\n" + "\n".join(codes)
-                )
-                await update.message.reply_text("Coupons sent to the user successfully.")
+                        db_execute("INSERT INTO coupons (payment_id, code) VALUES (%s, %s)", (payment_id, code))
+                row = db_fetchone("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
+                user_chat_id = row['chat_id'] if row else None
+                if user_chat_id:
+                    await context.bot.send_message(
+                        user_chat_id,
+                        "🎉 Your coupon purchase is approved!\n\nHere are your coupons:\n" + "\n".join(codes)
+                    )
+                    await update.message.reply_text("Coupons sent to the user successfully.")
                 del user_state[chat_id]['expecting']
             elif expecting == 'user_credentials' and chat_id == ADMIN_ID:
                 lines = text.splitlines()
@@ -1077,46 +1125,45 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 username, password = lines
                 for_user = user_state[chat_id]['for_user']
-                cursor.execute(
-                    "UPDATE users SET username=%s, password=%s, payment_status='registered', registration_date=%s WHERE chat_id=%s",
-                    (username, password, datetime.datetime.now(), for_user)
-                )
-                conn.commit()
-                cursor.execute("SELECT package, referred_by FROM users WHERE chat_id=%s", (for_user,))
-                row = cursor.fetchone()
-                if row:
-                    package, referred_by = row
-                    if referred_by:
-                        additional_reward = 0.4 if package == "Standard" else 0.9
-                        cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (additional_reward, referred_by))
-                        conn.commit()
-                await context.bot.send_message(
-                    for_user,
-                    f"🎉 Registration successful! Your username is\n {username}\n and password is\n {password}\n\n Join the group using the link below to access your Mentorship forum:\n {GROUP_LINK}"
-                )
-                cursor.execute("SELECT package, email, name, phone FROM users WHERE chat_id=%s", (for_user,))
-                user_details = cursor.fetchone()
-                if user_details:
-                    pkg, email, full_name, phone = user_details
-                    await context.bot.send_message(
-                        ADMIN_ID,
-                        f"New registration:\nUser ID: {for_user}\nUsername: {username}\nPackage: {pkg}\nEmail: {email}\nName: {full_name}\nPhone: {phone}"
+                try:
+                    db_execute(
+                        "UPDATE users SET username=%s, password=%s, payment_status='registered', registration_date=%s WHERE chat_id=%s",
+                        (username, password, datetime.datetime.now(), for_user)
                     )
-                await update.message.reply_text("Credentials set and sent to the user.")
-                keyboard = [
-                    [InlineKeyboardButton("Yes, enable reminders", callback_data="enable_reminders")],
-                    [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
-                ]
-                await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
-                reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
-                await context.bot.send_message(
-                    for_user,
-                    "Use the button below 'ONLY' if you get stuck on a process:",
-                    reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-                )
-                del user_state[chat_id]
+                    row = db_fetchone("SELECT package, referred_by FROM users WHERE chat_id=%s", (for_user,))
+                    if row and row['referred_by']:
+                        package, referred_by = row['package'], row['referred_by']
+                        additional_reward = 0.4 if package == "Standard" else 0.9
+                        db_execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (additional_reward, referred_by))
+                    await context.bot.send_message(
+                        for_user,
+                        f"🎉 Registration successful! Your username is\n {username}\n and password is\n {password}\n\n Join the group using the link below to access your Mentorship forum:\n {GROUP_LINK}"
+                    )
+                    row = db_fetchone("SELECT package, email, name, phone FROM users WHERE chat_id=%s", (for_user,))
+                    if row:
+                        pkg, email, full_name, phone = row['package'], row['email'], row['name'], row['phone']
+                        await context.bot.send_message(
+                            ADMIN_ID,
+                            f"New registration:\nUser ID: {for_user}\nUsername: {username}\nPackage: {pkg}\nEmail: {email}\nName: {full_name}\nPhone: {phone}"
+                        )
+                    await update.message.reply_text("Credentials set and sent to the user.")
+                    keyboard = [
+                        [InlineKeyboardButton("Yes, enable reminders", callback_data="enable_reminders")],
+                        [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
+                    ]
+                    await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
+                    reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
+                    await context.bot.send_message(
+                        for_user,
+                        "Use the button below 'ONLY' if you get stuck on a process:",
+                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+                    )
+                    del user_state[chat_id]
+                except psycopg.Error as e:
+                    logger.error(f"Database error in user_credentials for chat_id {for_user}: {e}")
+                    await update.message.reply_text("An error occurred. Please try again.")
         except Exception as e:
-            logger.error(f"Error in handle_text: {e}")
+            logger.error(f"Error in handle_text for chat_id {chat_id}: {e}")
             await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
     else:
         status = get_status(chat_id)
@@ -1134,13 +1181,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             password = secrets.token_urlsafe(8)
             try:
-                cursor.execute(
+                db_execute(
                     "UPDATE users SET email=%s, name=%s, username=%s, phone=%s, password=%s WHERE chat_id=%s",
                     (email, full_name, username, phone, password, chat_id)
                 )
-                conn.commit()
-                cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
-                pkg = cursor.fetchone()[0]
+                row = db_fetchone("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
+                pkg = row['package'] if row else 'Unknown'
                 keyboard = [[InlineKeyboardButton("Finalize Registration", callback_data=f"finalize_reg_{chat_id}")]]
                 await context.bot.send_message(
                     ADMIN_ID,
@@ -1152,7 +1198,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
                 )
             except psycopg.Error as e:
-                logger.error(f"Database error in pending_details: {e}")
+                logger.error(f"Database error in pending_details for chat_id {chat_id}: {e}")
                 await update.message.reply_text("An error occurred. Please try again.")
 
 # Job functions
@@ -1166,19 +1212,18 @@ async def check_registration_payment(context: ContextTypes.DEFAULT_TYPE):
 async def check_coupon_payment(context: ContextTypes.DEFAULT_TYPE):
     payment_id = context.job.data['payment_id']
     try:
-        cursor.execute("SELECT status, chat_id FROM payments WHERE id=%s", (payment_id,))
-        row = cursor.fetchone()
-        if row and row[0] == 'pending_payment':
-            chat_id = row[1]
+        row = db_fetchone("SELECT status, chat_id FROM payments WHERE id=%s", (payment_id,))
+        if row and row['status'] == 'pending_payment':
+            chat_id = row['chat_id']
             keyboard = [[InlineKeyboardButton("Payment Approval Stats", callback_data="check_approval")]]
             await context.bot.send_message(chat_id, "Your coupon payment is still being reviewed. Click below to check status:", reply_markup=InlineKeyboardMarkup(keyboard))
     except psycopg.Error as e:
-        logger.error(f"Database error in check_coupon_payment: {e}")
+        logger.error(f"Database error in check_coupon_payment for payment_id {payment_id}: {e}")
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
     try:
-        cursor.execute("SELECT chat_id FROM users WHERE alarm_setting=1")
-        user_ids = [row[0] for row in cursor.fetchall()]
+        rows = cursor.execute("SELECT chat_id FROM users WHERE alarm_setting=1").fetchall()
+        user_ids = [row['chat_id'] for row in rows]
         for user_id in user_ids:
             try:
                 await context.bot.send_message(user_id, "🌟 Daily Reminder: Complete your Tapify tasks to maximize your earnings!")
@@ -1192,26 +1237,26 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now()
     start_time = now - datetime.timedelta(days=1)
     try:
-        cursor.execute("SELECT COUNT(*) FROM users WHERE registration_date >= %s", (start_time,))
-        new_users = cursor.fetchone()[0]
-        cursor.execute("""
+        row = db_fetchone("SELECT COUNT(*) FROM users WHERE registration_date >= %s", (start_time,))
+        new_users = row[0] if row else 0
+        row = db_fetchone("""
             SELECT SUM(CASE package WHEN 'Standard' THEN 10000 WHEN 'X' THEN 14000 ELSE 0 END)
             FROM users
             WHERE approved_at >= %s AND payment_status = 'registered'
         """, (start_time,))
-        reg_payments = cursor.fetchone()[0] or 0
-        cursor.execute("SELECT SUM(total_amount) FROM payments WHERE approved_at >= %s AND status = 'approved'", (start_time,))
-        coupon_payments = cursor.fetchone()[0] or 0
+        reg_payments = row[0] or 0
+        row = db_fetchone("SELECT SUM(total_amount) FROM payments WHERE approved_at >= %s AND status = 'approved'", (start_time,))
+        coupon_payments = row[0] or 0
         total_payments = reg_payments + coupon_payments
-        cursor.execute("SELECT COUNT(*) FROM user_tasks WHERE completed_at >= %s", (start_time,))
-        tasks_completed = cursor.fetchone()[0]
-        cursor.execute("""
+        row = db_fetchone("SELECT COUNT(*) FROM user_tasks WHERE completed_at >= %s", (start_time,))
+        tasks_completed = row[0] if row else 0
+        row = db_fetchone("""
             SELECT SUM(t.reward)
             FROM user_tasks ut
             JOIN tasks t ON ut.task_id = t.id
             WHERE ut.completed_at >= %s
         """, (start_time,))
-        total_distributed = cursor.fetchone()[0] or 0
+        total_distributed = row[0] or 0
         text = (
             f"📊 Daily Summary ({now.strftime('%Y-%m-%d')}):\n\n"
             f"• New Users: {new_users}\n"
@@ -1228,15 +1273,14 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     try:
-        cursor.execute("SELECT payment_status, package FROM users WHERE chat_id=%s", (chat_id,))
-        user = cursor.fetchone()
+        row = db_fetchone("SELECT payment_status, package FROM users WHERE chat_id=%s", (chat_id,))
         keyboard = [
             [InlineKeyboardButton("How It Works", callback_data="how_it_works")],
             [InlineKeyboardButton("Purchase Coupon", callback_data="coupon")],
             [InlineKeyboardButton("💸 Get Registered", callback_data="package_selector")],
             [InlineKeyboardButton("❓ Help", callback_data="help")],
         ]
-        if user and user[0] == 'registered':
+        if row and row['payment_status'] == 'registered':
             keyboard = [
                 [InlineKeyboardButton("📊 My Stats", callback_data="stats")],
                 [InlineKeyboardButton("Do Daily Tasks", callback_data="daily_tasks")],
@@ -1244,11 +1288,11 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("Purchase Coupon", callback_data="coupon")],
                 [InlineKeyboardButton("❓ Help", callback_data="help")],
             ]
-            if user[1] == "X":
+            if row['package'] == "X":
                 keyboard.insert(1, [InlineKeyboardButton("🚀 Boost with AI", callback_data="boost_ai")])
         text = "Select an option below:"
         reply_keyboard = [["/menu(🔙)"]]
-        if user and user[0] == 'registered':
+        if row and row['payment_status'] == 'registered':
             reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))])
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1266,7 +1310,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         log_interaction(chat_id, "show_main_menu")
     except psycopg.Error as e:
-        logger.error(f"Database error in show_main_menu: {e}")
+        logger.error(f"Database error in show_main_menu for chat_id {chat_id}: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
 
 async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
