@@ -297,9 +297,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     reply_keyboard = [["/menu(🔙)"]]
     if is_registered(chat_id):
-        reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))])
+        reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
     await update.message.reply_text(
-        "Use the button below 'ONLY' if you get stuck on a process:",
+        "Use the button's below to access the main menu and Tapify Games:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
 
@@ -1189,7 +1189,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
             ]
             await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
-            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
+            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={for_user}"))]]
             await context.bot.send_message(
                 for_user,
                 "Use the button below 'ONLY' if you get stuck on a process:",
@@ -1298,7 +1298,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "Select an option below:"
         reply_keyboard = [["/menu(🔙)"]]
         if user and user["payment_status"] == 'registered':
-            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))])
+            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
@@ -1317,7 +1317,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except psycopg.Error as e:
         logger.error(f"Database error in show_main_menu: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
-
 async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.callback_query.from_user.id
     status = get_status(chat_id)
