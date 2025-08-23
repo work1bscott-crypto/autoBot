@@ -110,11 +110,11 @@ HELP_TOPICS = {
 }
 
 # Convert mp3 to ogg (Opus)
-try:
-    sound = AudioSegment.from_mp3("voice.mp3")
-    sound.export("voice.ogg", format="ogg", codec="libopus")
-except FileNotFoundError:
-    logging.warning("voice.mp3 not found; voice note feature may fail")
+#try:
+#    sound = AudioSegment.from_mp3("voice.mp3")
+#    sound.export("voice.ogg", format="ogg", codec="libopus")
+#except FileNotFoundError:
+#    logging.warning("voice.mp3 not found; voice note feature may fail")#
 
 # Database setup
 conn_pool = None
