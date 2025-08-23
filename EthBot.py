@@ -56,11 +56,11 @@ def webhook():
 def home():
     return "Tapify is alive!"
 
-@app.post(f"/{os.getenv('BOT_TOKEN')}")
-def webhook():
-    update = Update.de_json(request.get_json(), application.bot)
-    loop.run_until_complete(application.process_update(update))
-    return "ok"
+#@app.post(f"/{os.getenv('BOT_TOKEN')}")
+#def webhook():
+#   update = Update.de_json(request.get_json(), application.bot)
+#    loop.run_until_complete(application.process_update(update))
+#    return "ok"
 
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
