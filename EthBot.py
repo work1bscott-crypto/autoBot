@@ -73,8 +73,8 @@ AI_BOOST_LINK = os.getenv("AI_BOOST_LINK", "")
 DAILY_TASK_LINK = os.getenv("DAILY_TASK_LINK", "")
 APP_URL = os.getenv("APP_URL")  # Added: for webhook URL
 WEBHOOK_URL = APP_URL + WEBHOOK_PATH  # Added: full webhook URL
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://tapify.onrender.com/app")
-WEBAPP_BASE = os.getenv("WEBAPP_BASE", "https://tapify.onrender.com")  # Added if needed for Aviator
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
+WEBAPP_BASE = os.getenv("WEBAPP_BASE", "")  # Added if needed for Aviator
 
 # Validate environment variables
 if not BOT_TOKEN:
