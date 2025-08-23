@@ -1744,6 +1744,16 @@ async def aviator_webapp():
     </html>
     """
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error: {context.error}")
+    if update and update.effective_chat:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"Error in chat {update.effective_chat.id}: {context.error}"
+        )
+        if update.effective_message:
+            await update.effective_message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
+
 # Main bot setup
 async def main():
     global application
