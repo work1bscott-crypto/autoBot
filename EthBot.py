@@ -37,6 +37,24 @@ from threading import Thread
 # Flask setup for Render keep-alive and APIs
 app = Flask(__name__)
 
+# Load environment
+load_dotenv()
+
+# Get bot token
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is not set in .env")
+
+# Create PTB Application
+application = Application.builder().token(BOT_TOKEN).build()
+
+# Webhook route
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.update_queue.put_nowait(update)
+    return "ok", 200
+    
 @app.route('/')
 def home():
     return "Tapify is alive!"
@@ -46,12 +64,6 @@ def webhook():
     update = Update.de_json(request.get_json(), application.bot)
     loop.run_until_complete(application.process_update(update))
     return "ok"
-
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    application.update_queue.put_nowait(update)
-    return "ok", 200
 
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -442,8 +454,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_state[chat_id] = {'expecting': 'broadcast_message'}
     await update.message.reply_text("Please enter the broadcast message to send to all registered users:")
     await log_interaction(chat_id, "broadcast_initiated")
-
-application = Application.builder().token(BOT_TOKEN).build()
 
 # Callback handlers
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
