@@ -1387,7 +1387,7 @@ def _sample_crash_point() -> float:
 
 # ================== DATABASE ADDITIONS ==================
 # (Safe to run repeatedly — uses IF NOT EXISTS)
-cur.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS aviator_rounds (
   id BIGSERIAL PRIMARY KEY,
   chat_id BIGINT NOT NULL,
@@ -1398,7 +1398,7 @@ CREATE TABLE IF NOT EXISTS aviator_rounds (
   status TEXT NOT NULL DEFAULT 'active' -- active|crashed|cashed
 );
 """)
-cur.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS aviator_plays (
   id BIGSERIAL PRIMARY KEY,
   round_id BIGINT REFERENCES aviator_rounds(id),
@@ -1410,8 +1410,8 @@ CREATE TABLE IF NOT EXISTS aviator_plays (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """)
-cur.execute("CREATE INDEX IF NOT EXISTS idx_aviator_rounds_chat ON aviator_rounds(chat_id);")
-cur.execute("CREATE INDEX IF NOT EXISTS idx_aviator_plays_round ON aviator_plays(round_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_aviator_rounds_chat ON aviator_rounds(chat_id);")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_aviator_plays_round ON aviator_plays(round_id);")
 
 # ================== API ENDPOINTS ==================
 
@@ -1423,9 +1423,9 @@ def api_tap():
     if not chat_id:
         return jsonify({"ok": False, "error": "chat_id required"}), 400
     # credit only registered users
-    cur.execute("UPDATE users SET balance = COALESCE(balance,0) + 0.01 WHERE chat_id=%s AND payment_status='registered'", (chat_id,))
-    cur.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
-    row = cur.fetchone()
+    cursor.execute("UPDATE users SET balance = COALESCE(balance,0) + 0.01 WHERE chat_id=%s AND payment_status='registered'", (chat_id,))
+    cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
+    row = cursor.fetchone()
     if not row:
         return jsonify({"ok": False, "error": "user not found"}), 404
     return jsonify({"ok": True, "balance": float(row["balance"])})
@@ -1438,25 +1438,25 @@ def api_aviator_start():
     bet = float(d.get("bet_amount", 0) or 0)
     if chat_id <= 0 or bet <= 0:
         return jsonify({"ok": False, "error": "invalid chat_id/bet"}), 400
-    cur.execute("SELECT balance, payment_status FROM users WHERE chat_id=%s", (chat_id,))
-    u = cur.fetchone()
+    cursor.execute("SELECT balance, payment_status FROM users WHERE chat_id=%s", (chat_id,))
+    u = cursor.fetchone()
     if not u or u["payment_status"] != "registered":
         return jsonify({"ok": False, "error": "Not registered"}), 403
     if float(u["balance"] or 0) < bet:
         return jsonify({"ok": False, "error": "Insufficient balance"}), 400
 
     # take bet
-    cur.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (bet, chat_id))
+    cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (bet, chat_id))
     seed = secrets.token_hex(8)
     crash = _sample_crash_point()
     now = datetime.datetime.utcnow()
-    cur.execute(
+    cursor.execute(
         "INSERT INTO aviator_rounds(chat_id, seed, crash_point, start_time) "
         "VALUES(%s,%s,%s,%s) RETURNING id, crash_point",
         (chat_id, seed, crash, now)
     )
-    rd = cur.fetchone()
-    cur.execute(
+    rd = cursor.fetchone()
+    cursor.execute(
         "INSERT INTO aviator_plays(round_id, chat_id, bet_amount, outcome) VALUES(%s,%s,%s,'none')",
         (rd["id"], chat_id, bet)
     )
@@ -1471,13 +1471,13 @@ def api_aviator_cashout():
     if round_id <= 0:
         return jsonify({"ok": False, "error": "round_id required"}), 400
 
-    cur.execute("""
+    cursor.execute("""
         SELECT r.id, r.chat_id, r.crash_point, r.start_time, r.status, p.bet_amount
         FROM aviator_rounds r
         JOIN aviator_plays p ON p.round_id = r.id
         WHERE r.id = %s
     """, (round_id,))
-    row = cur.fetchone()
+    row = cursor.fetchone()
     if not row:
         return jsonify({"ok": False, "error": "Round not found"}), 404
     if row["status"] != "active":
@@ -1490,17 +1490,17 @@ def api_aviator_cashout():
 
     if current_m >= float(row["crash_point"]) - 1e-12:
         # too late; crashed
-        cur.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,))
-        cur.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,))
+        cursor.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,))
+        cursor.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,))
         return jsonify({"ok": False, "error": f"Crashed at x{row['crash_point']:.2f}"}), 409
 
     payout = float(row["bet_amount"]) * current_m
-    cur.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (payout, row["chat_id"]))
-    cur.execute(
+    cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (payout, row["chat_id"]))
+    cursor.execute(
         "UPDATE aviator_plays SET outcome='win', cashout_multiplier=%s, payout=%s WHERE round_id=%s",
         (current_m, payout, round_id)
     )
-    cur.execute("UPDATE aviator_rounds SET status='cashed', end_time=NOW() WHERE id=%s", (round_id,))
+    cursor.execute("UPDATE aviator_rounds SET status='cashed', end_time=NOW() WHERE id=%s", (round_id,))
     return jsonify({"ok": True, "cashout_multiplier": float(current_m), "payout": float(payout)})
 
 # --- Aviator: close (server marks crash; used when client detects crash) ---
@@ -1510,18 +1510,18 @@ def api_aviator_close():
     round_id = int(d.get("round_id", 0) or 0)
     if round_id <= 0:
         return jsonify({"ok": True})
-    cur.execute("SELECT status FROM aviator_rounds WHERE id=%s", (round_id,))
-    r = cur.fetchone()
+    cursor.execute("SELECT status FROM aviator_rounds WHERE id=%s", (round_id,))
+    r = cursor.fetchone()
     if r and r["status"] == "active":
-        cur.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,))
-        cur.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,))
+        cursor.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,))
+        cursor.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,))
     return jsonify({"ok": True})
 
 # --- Aviator: last 12 crash points for chips display (per user) ---
 @app.get("/api/aviator/recent/<int:chat_id>")
 def api_aviator_recent(chat_id:int):
-    cur.execute("SELECT crash_point FROM aviator_rounds WHERE chat_id=%s ORDER BY id DESC LIMIT 12", (chat_id,))
-    return jsonify([float(r["crash_point"]) for r in cur.fetchall()])
+    cursor.execute("SELECT crash_point FROM aviator_rounds WHERE chat_id=%s ORDER BY id DESC LIMIT 12", (chat_id,))
+    return jsonify([float(r["crash_point"]) for r in cursor.fetchall()])
 
 # ================== WEBAPP PAGES (TAP & AVIATOR with top nav) ==================
 # NOTE: These are minimal but pretty. You can re-skin easily.
