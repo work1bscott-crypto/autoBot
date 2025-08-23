@@ -11,58 +11,41 @@
 #   AI_BOOST_LINK=your_ai_boost_link
 #   DAILY_TASK_LINK=your_daily_task_link
 #   DATABASE_URL=postgres://user:pass@host:port/dbname
-#   APP_URL=https://tapify.onrender.com  # Add this: your Render URL (no trailing slash)
-#   WEBAPP_BASE=https://tapify.onrender.com  # Add this if needed for Aviator
+#   WEBHOOK_URL=your_webhook_url
+#   WEBAPP_BASE=your_webapp_base
+#   PORT=your_port (e.g., 8080)
 #
 # Start:
 #   python main.py
 
+import asyncio
 import logging
 import psycopg
 import re
 import time
 import datetime
 import os
+import secrets
+import math
+import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from pydub import AudioSegment
-from flask import Flask, request  # Updated: added request
-import threading
-import asyncio  # Added for async webhook setup
-import secrets  # Added: used in generate_referral_code
-import urllib.parse as urlparse
-import math, random  # From addon
+from flask import Flask, request, jsonify
+from threading import Thread
 
-# Flask setup for Render (now main server, no keep-alive thread)
+# Flask setup for Render keep-alive and APIs
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Tapify is alive!"
 
-# Webhook route (Telegram sends updates here)
-WEBHOOK_PATH = '/' + os.getenv("BOT_TOKEN")
-@app.route(WEBHOOK_PATH, methods=['GET', 'POST'])
+@app.post(f"/{os.getenv('BOT_TOKEN')}")
 def webhook():
-    if request.method == 'POST':
-        update_data = request.get_json()
-        update = Update.de_json(update_data, application.bot)
-        application.process_update(update)
-        return 'ok', 200
-    return 'ok', 200
-
-# Initialize the bot application with your token
-application = Application.builder().token('YOUR_BOT_TOKEN').build()
-
-def webhook(update_data):
-    update = Update.de_json(update_data, application.bot)
+    update = Update.de_json(request.get_json(), application.bot)
+    loop.run_until_complete(application.process_update(update))
+    return "ok"
 
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -71,10 +54,11 @@ GROUP_LINK = os.getenv("GROUP_LINK", "")
 SITE_LINK = os.getenv("SITE_LINK", "")
 AI_BOOST_LINK = os.getenv("AI_BOOST_LINK", "")
 DAILY_TASK_LINK = os.getenv("DAILY_TASK_LINK", "")
-APP_URL = os.getenv("APP_URL")  # Added: for webhook URL
-WEBHOOK_URL = APP_URL + WEBHOOK_PATH  # Added: full webhook URL
-WEBAPP_URL = os.getenv("WEBAPP_URL", "")
-WEBAPP_BASE = os.getenv("WEBAPP_BASE", "")  # Added if needed for Aviator
+WEBAPP_BASE = os.getenv("WEBAPP_BASE", "https://tapify.onrender.com")
+WEBAPP_URL = f"{WEBAPP_BASE}/tap"
+AVIATOR_URL = f"{WEBAPP_BASE}/aviator"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 8080))
 
 # Validate environment variables
 if not BOT_TOKEN:
@@ -83,9 +67,12 @@ if not BOT_TOKEN:
 if not ADMIN_ID:
     logging.error("ADMIN_ID is required in environment (.env)")
     raise ValueError("ADMIN_ID is required")
-if not APP_URL:
-    logging.error("APP_URL is required in environment (.env)")
-    raise ValueError("APP_URL is required")
+if not WEBHOOK_URL:
+    logging.error("WEBHOOK_URL is required in environment (.env)")
+    raise ValueError("WEBHOOK_URL is required")
+if not WEBAPP_BASE:
+    logging.error("WEBAPP_BASE is required in environment (.env)")
+    raise ValueError("WEBAPP_BASE is required")
 
 # Predefined payment accounts
 PAYMENT_ACCOUNTS = {
@@ -143,8 +130,14 @@ try:
 except FileNotFoundError:
     logging.warning("voice.mp3 not found; voice note feature may fail")
 
-# Database setup with PostgreSQL
-try:
+# Database setup
+conn = None
+cursor = None
+
+async def setup_db():
+    global conn, cursor
+    import urllib.parse as urlparse
+
     url = os.getenv("DATABASE_URL")
     if not url:
         raise ValueError("DATABASE_URL must be set for PostgreSQL")
@@ -153,12 +146,11 @@ try:
             url += "&sslmode=require"
         else:
             url += "?sslmode=require"
-    conn = psycopg.connect(url, row_factory=psycopg.rows.dict_row)
-    conn.autocommit = True
-    cursor = conn.cursor()
+    conn = await psycopg.AsyncConnection.connect(url, row_factory=psycopg.rows.dict_row)
+    cursor = await conn.cursor()
 
     # Users table
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             chat_id BIGINT PRIMARY KEY,
             package TEXT,
@@ -182,7 +174,7 @@ try:
     """)
 
     # Payments table
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
             chat_id BIGINT,
@@ -198,7 +190,7 @@ try:
     """)
 
     # Coupons table
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS coupons (
             id SERIAL PRIMARY KEY,
             payment_id INTEGER,
@@ -208,7 +200,7 @@ try:
     """)
 
     # Interactions table
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS interactions (
             id SERIAL PRIMARY KEY,
             chat_id BIGINT,
@@ -218,7 +210,7 @@ try:
     """)
 
     # Tasks table
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
             type TEXT,
@@ -230,7 +222,7 @@ try:
     """)
 
     # User_tasks table
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_tasks (
             user_id BIGINT,
             task_id INTEGER,
@@ -241,9 +233,34 @@ try:
         )
     """)
 
-except psycopg.Error as e:
-    logging.error(f"Database error: {e}")
-    raise
+    # Aviator tables
+    await cursor.execute("""
+        CREATE TABLE IF NOT EXISTS aviator_rounds (
+            id BIGSERIAL PRIMARY KEY,
+            chat_id BIGINT NOT NULL,
+            seed TEXT NOT NULL,
+            crash_point DOUBLE PRECISION NOT NULL,
+            start_time TIMESTAMP NOT NULL,
+            end_time TIMESTAMP,
+            status TEXT NOT NULL DEFAULT 'active' -- active|crashed|cashed
+        );
+    """)
+    await cursor.execute("""
+        CREATE TABLE IF NOT EXISTS aviator_plays (
+            id BIGSERIAL PRIMARY KEY,
+            round_id BIGINT REFERENCES aviator_rounds(id),
+            chat_id BIGINT NOT NULL,
+            bet_amount DOUBLE PRECISION NOT NULL,
+            cashout_multiplier DOUBLE PRECISION,
+            payout DOUBLE PRECISION,
+            outcome TEXT, -- win|lose|none
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_aviator_rounds_chat ON aviator_rounds(chat_id);")
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_aviator_plays_round ON aviator_plays(round_id);")
+
+    await conn.commit()
 
 # In-memory storage
 user_state = {}
@@ -254,27 +271,28 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Helper functions
-def get_status(chat_id):
+async def get_status(chat_id):
     try:
-        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
-        row = cursor.fetchone()
+        await cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        row = await cursor.fetchone()
         return row["payment_status"] if row else None
     except psycopg.Error as e:
         logger.error(f"Database error in get_status: {e}")
         return None
 
-def is_registered(chat_id):
+async def is_registered(chat_id):
     try:
-        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
-        row = cursor.fetchone()
+        await cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        row = await cursor.fetchone()
         return row and row["payment_status"] == 'registered'
     except psycopg.Error as e:
         logger.error(f"Database error in is_registered {chat_id}: {e}")
         return False
 
-def log_interaction(chat_id, action):
+async def log_interaction(chat_id, action):
     try:
-        cursor.execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
+        await cursor.execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
+        await conn.commit()
     except psycopg.Error as e:
         logger.error(f"Database error in log_interaction: {e}")
 
@@ -292,17 +310,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referred_by = int(args[0].split("_")[1])
         except (IndexError, ValueError):
             pass
-    log_interaction(chat_id, "start")
+    await log_interaction(chat_id, "start")
     try:
-        cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
-        if not cursor.fetchone():
-            cursor.execute(
+        await cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
+        if not await cursor.fetchone():
+            await cursor.execute(
                 "INSERT INTO users (chat_id, username, referral_code, referred_by) VALUES (%s, %s, %s, %s)",
                 (chat_id, update.effective_user.username or "Unknown", referral_code, referred_by)
             )
             if referred_by:
-                cursor.execute("UPDATE users SET invites = invites + 1, balance = balance + 0.1 WHERE chat_id=%s", (referred_by,))
-        conn.commit()
+                await cursor.execute("UPDATE users SET invites = invites + 1, balance = balance + 0.1 WHERE chat_id=%s", (referred_by,))
+            await conn.commit()
     except psycopg.Error as e:
         logger.error(f"Database error in start: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
@@ -316,8 +334,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     reply_keyboard = [["/menu(🔙)"]]
-    if is_registered(chat_id):
+    if await is_registered(chat_id):
         reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
+        reply_keyboard.append([KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{AVIATOR_URL}?chat_id={chat_id}"))])
     await update.message.reply_text(
         "Use the button's below to access the main menu and Tapify Games:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
@@ -325,7 +344,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
-    if not is_registered(chat_id):
+    if not await is_registered(chat_id):
         await update.message.reply_text("Please complete registration to play the game.")
         return
     kb = [[KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
@@ -338,14 +357,14 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_state[chat_id] = {'expecting': 'support_message'}
     await update.message.reply_text("Please describe your issue or question:")
-    log_interaction(chat_id, "support_initiated")
+    await log_interaction(chat_id, "support_initiated")
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    log_interaction(chat_id, "stats")
+    await log_interaction(chat_id, "stats")
     try:
-        cursor.execute("SELECT payment_status, streaks, invites, package, balance FROM users WHERE chat_id=%s", (chat_id,))
-        user = cursor.fetchone()
+        await cursor.execute("SELECT payment_status, streaks, invites, package, balance FROM users WHERE chat_id=%s", (chat_id,))
+        user = await cursor.fetchone()
         if not user:
             if update.callback_query:
                 await update.callback_query.answer("No user data found. Please start with /start.")
@@ -378,7 +397,7 @@ async def reset_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id in user_state:
         del user_state[chat_id]
     await update.message.reply_text("State reset. Try the flow again.")
-    log_interaction(chat_id, "reset_state")
+    await log_interaction(chat_id, "reset_state")
 
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -398,13 +417,13 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     created_at = datetime.datetime.now()
     expires_at = created_at + datetime.timedelta(days=1)
     try:
-        cursor.execute(
+        await cursor.execute(
             "INSERT INTO tasks (type, link, reward, created_at, expires_at) VALUES (%s, %s, %s, %s, %s)",
             (task_type, link, reward, created_at, expires_at)
         )
-        conn.commit()
+        await conn.commit()
         await update.message.reply_text("Task added successfully.")
-        log_interaction(chat_id, "add_task")
+        await log_interaction(chat_id, "add_task")
     except psycopg.Error as e:
         logger.error(f"Database error in add_task: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
@@ -416,7 +435,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_state[chat_id] = {'expecting': 'broadcast_message'}
     await update.message.reply_text("Please enter the broadcast message to send to all registered users:")
-    log_interaction(chat_id, "broadcast_initiated")
+    await log_interaction(chat_id, "broadcast_initiated")
 
 # Callback handlers
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -425,7 +444,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.from_user.id
     logger.info(f"Received callback data: {data} from chat_id: {chat_id}")
     await query.answer()
-    log_interaction(chat_id, f"button_{data}")
+    await log_interaction(chat_id, f"button_{data}")
 
     try:
         if data == "menu":
@@ -435,8 +454,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "stats":
             await stats(update, context)
         elif data == "refer_friend":
-            cursor.execute("SELECT referral_code FROM users WHERE chat_id=%s", (chat_id,))
-            referral_code = cursor.fetchone()["referral_code"]
+            await cursor.execute("SELECT referral_code FROM users WHERE chat_id=%s", (chat_id,))
+            referral_code = (await cursor.fetchone())["referral_code"]
             referral_link = f"https://t.me/{context.bot.username}?start=ref_{chat_id}"
             text = (
                 "👥 Refer a Friend and Earn Rewards!\n\n"
@@ -446,8 +465,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
         elif data == "withdraw":
-            cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
-            balance = cursor.fetchone()["balance"]
+            await cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
+            balance = (await cursor.fetchone())["balance"]
             if balance < 30:
                 await query.answer("Your balance is less than $30.")
                 return
@@ -561,12 +580,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             package = user_state[chat_id]['coupon_package']
             quantity = user_state[chat_id]['coupon_quantity']
             total = user_state[chat_id]['coupon_total']
-            cursor.execute(
+            await cursor.execute(
                 "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (chat_id, 'coupon', package, quantity, total, account, 'pending_payment')
             )
-            payment_id = cursor.fetchone()["id"]
-            conn.commit()
+            payment_id = (await cursor.fetchone())["id"]
+            await conn.commit()
             user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
             keyboard = [
                 [InlineKeyboardButton("Change Account", callback_data="show_coupon_account_selection")],
@@ -589,7 +608,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
             )
         elif data == "package_selector":
-            status = get_status(chat_id)
+            status = await get_status(chat_id)
             if status == 'registered':
                 await context.bot.send_message(chat_id, "You are already registered.")
                 return
@@ -602,10 +621,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             package = "Standard" if data == "reg_standard" else "X"
             user_state[chat_id] = {'package': package}
             try:
-                cursor.execute("UPDATE users SET package=%s, payment_status='pending_payment' WHERE chat_id=%s", (package, chat_id))
+                await cursor.execute("UPDATE users SET package=%s, payment_status='pending_payment' WHERE chat_id=%s", (package, chat_id))
                 if cursor.rowcount == 0:
-                    cursor.execute("INSERT INTO users (chat_id, package, payment_status, username) VALUES (%s, %s, 'pending_payment', %s)", (chat_id, package, update.effective_user.username or "Unknown"))
-                conn.commit()
+                    await cursor.execute("INSERT INTO users (chat_id, package, payment_status, username) VALUES (%s, %s, 'pending_payment', %s)", (chat_id, package, update.effective_user.username or "Unknown"))
+                await conn.commit()
                 keyboard = [[InlineKeyboardButton(a, callback_data=f"reg_account_{a}")] for a in PAYMENT_ACCOUNTS.keys()]
                 keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
                 keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
@@ -651,8 +670,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if parts[1] == "reg":
                 user_chat_id = int(parts[2])
                 try:
-                    cursor.execute("UPDATE users SET payment_status='pending_details', approved_at=%s WHERE chat_id=%s", (datetime.datetime.now(), user_chat_id))
-                    conn.commit()
+                    await cursor.execute("UPDATE users SET payment_status='pending_details', approved_at=%s WHERE chat_id=%s", (datetime.datetime.now(), user_chat_id))
+                    await conn.commit()
                     user_state[user_chat_id] = {'expecting': 'name'}
                     await context.bot.send_message(
                         user_chat_id,
@@ -665,8 +684,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif parts[1] == "coupon":
                 payment_id = int(parts[2])
                 try:
-                    cursor.execute("UPDATE payments SET status='approved', approved_at=%s WHERE id=%s", (datetime.datetime.now(), payment_id))
-                    conn.commit()
+                    await cursor.execute("UPDATE payments SET status='approved', approved_at=%s WHERE id=%s", (datetime.datetime.now(), payment_id))
+                    await conn.commit()
                     user_state[ADMIN_ID] = {'expecting': {'type': 'coupon_codes', 'payment_id': payment_id}}
                     await context.bot.send_message(ADMIN_ID, f"Payment {payment_id} approved. Please send the coupon codes (one per line).")
                     await query.edit_message_text("Payment approved. Waiting for coupon codes.")
@@ -677,11 +696,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_id = int(parts[2])
                 user_chat_id = int(parts[3])
                 try:
-                    cursor.execute("INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES (%s, %s, %s)", (user_chat_id, task_id, datetime.datetime.now()))
-                    cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
-                    reward = cursor.fetchone()["reward"]
-                    cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (reward, user_chat_id))
-                    conn.commit()
+                    await cursor.execute("INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES (%s, %s, %s)", (user_chat_id, task_id, datetime.datetime.now()))
+                    await cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
+                    reward = (await cursor.fetchone())["reward"]
+                    await cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (reward, user_chat_id))
+                    await conn.commit()
                     await context.bot.send_message(user_chat_id, f"Task approved! You earned ${reward}.")
                     await query.edit_message_text("Task approved and reward awarded.")
                 except psycopg.Error as e:
@@ -700,14 +719,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             task_id = int(parts[2])
             user_chat_id = int(parts[3])
             try:
-                cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (user_chat_id,))
-                balance = cursor.fetchone()["balance"]
-                cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
-                reward = cursor.fetchone()["reward"]
+                await cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (user_chat_id,))
+                balance = (await cursor.fetchone())["balance"]
+                await cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
+                reward = (await cursor.fetchone())["reward"]
                 if balance >= reward:
-                    cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (reward, user_chat_id))
-                    cursor.execute("DELETE FROM user_tasks WHERE user_id=%s AND task_id=%s", (user_chat_id, task_id))
-                    conn.commit()
+                    await cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (reward, user_chat_id))
+                    await cursor.execute("DELETE FROM user_tasks WHERE user_id=%s AND task_id=%s", (user_chat_id, task_id))
+                    await conn.commit()
                     await context.bot.send_message(user_chat_id, "Task verification rejected. Reward revoked.")
                     await query.edit_message_text("Task rejected and reward removed.")
                 else:
@@ -722,8 +741,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif parts[1] == "coupon":
                 payment_id = int(parts[2])
                 try:
-                    cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
-                    user_chat_id = cursor.fetchone()["chat_id"]
+                    await cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
+                    user_chat_id = (await cursor.fetchone())["chat_id"]
                     await context.bot.send_message(user_chat_id, "Your coupon payment is still being reviewed.")
                 except psycopg.Error as e:
                     logger.error(f"Database error in pending_coupon: {e}")
@@ -734,10 +753,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             approval = user_state[chat_id]['waiting_approval']
             if approval['type'] == 'registration':
-                status = get_status(chat_id)
+                status = await get_status(chat_id)
                 if status == 'pending_details':
-                    await context.bot.send_message(chat_id, "Payment approved. Please provide your full name:")
                     user_state[chat_id] = {'expecting': 'name'}
+                    await context.bot.send_message(chat_id, "Payment approved. Please provide your full name:")
                 elif status == 'registered':
                     await context.bot.send_message(chat_id, "Your registration is complete.")
                 else:
@@ -745,8 +764,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif approval['type'] == 'coupon':
                 payment_id = approval['payment_id']
                 try:
-                    cursor.execute("SELECT status FROM payments WHERE id=%s", (payment_id,))
-                    status = cursor.fetchone()["status"]
+                    await cursor.execute("SELECT status FROM payments WHERE id=%s", (payment_id,))
+                    status = (await cursor.fetchone())["status"]
                     if status == 'approved':
                         await context.bot.send_message(chat_id, "Coupon payment approved. Check your coupons above.")
                     else:
@@ -756,11 +775,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id, "An error occurred. Please try again.")
         elif data == "toggle_reminder":
             try:
-                cursor.execute("SELECT alarm_setting FROM users WHERE chat_id=%s", (chat_id,))
-                current_setting = cursor.fetchone()["alarm_setting"]
+                await cursor.execute("SELECT alarm_setting FROM users WHERE chat_id=%s", (chat_id,))
+                current_setting = (await cursor.fetchone())["alarm_setting"]
                 new_setting = 1 if current_setting == 0 else 0
-                cursor.execute("UPDATE users SET alarm_setting=%s WHERE chat_id=%s", (new_setting, chat_id))
-                conn.commit()
+                await cursor.execute("UPDATE users SET alarm_setting=%s WHERE chat_id=%s", (new_setting, chat_id))
+                await conn.commit()
                 status = "enabled" if new_setting == 1 else "disabled"
                 await query.edit_message_text(f"Daily reminder {status}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
             except psycopg.Error as e:
@@ -773,8 +792,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         elif data == "user_registered":
             try:
-                cursor.execute("SELECT username, email, password, package FROM users WHERE chat_id=%s", (chat_id,))
-                user = cursor.fetchone()
+                await cursor.execute("SELECT username, email, password, package FROM users WHERE chat_id=%s", (chat_id,))
+                user = await cursor.fetchone()
                 if user:
                     username, email, password, package = user.values()
                     await query.edit_message_text(
@@ -793,8 +812,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "daily_tasks":
             try:
-                cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
-                package = cursor.fetchone()["package"]
+                await cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
+                package = (await cursor.fetchone())["package"]
                 msg = f"Follow this link to perform your daily tasks and earn: {DAILY_TASK_LINK}"
                 if package == "X":
                     msg = f"🌟 X Users: Maximize your earnings with this special daily task link: {DAILY_TASK_LINK}"
@@ -805,13 +824,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "earn_extra":
             now = datetime.datetime.now()
             try:
-                cursor.execute("""
+                await cursor.execute("""
                     SELECT t.id, t.type, t.link, t.reward
                     FROM tasks t
                     WHERE t.expires_at > %s
                     AND t.id NOT IN (SELECT ut.task_id FROM user_tasks ut WHERE ut.user_id = %s)
                 """, (now, chat_id))
-                tasks = cursor.fetchall()
+                tasks = await cursor.fetchall()
                 if not tasks:
                     await query.edit_message_text(
                         "No extra tasks available right now. Please check back later.",
@@ -832,25 +851,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("verify_task_"):
             task_id = int(data[len("verify_task_"):])
             try:
-                cursor.execute("SELECT type, link FROM tasks WHERE id=%s", (task_id,))
-                task = cursor.fetchone()
+                await cursor.execute("SELECT type, link FROM tasks WHERE id=%s", (task_id,))
+                task = await cursor.fetchone()
                 if not task:
                     await query.answer("Task not found.")
                     return
                 task_type, link = task.values()
-                regel = re.compile(r'(@[A-Za-z0-9]+)|(?:https?://)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))/([A-Za-z0-9\+]+)')
-                chat_username = regel.search(link).group()
+                regel = re.compile(r'(@[A-Za-z0-9_]+)|(?:https?://)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))/([A-Za-z0-9_\\+]+)')
+                match = regel.search(link)
+                if not match:
+                    await query.answer("Invalid link format.")
+                    return
+                chat_username = match.group()
                 if chat_username.startswith("http"):
                     chat_username = chat_username.split("/")[-1]
                 if task_type in ["join_group", "join_channel"]:
                     try:
                         member = await context.bot.get_chat_member(chat_username, chat_id)
                         if member.status in ["member", "administrator", "creator"]:
-                            cursor.execute("INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES (%s, %s, %s)", (chat_id, task_id, datetime.datetime.now()))
-                            cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
-                            reward = cursor.fetchone()["reward"]
-                            cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (reward, chat_id))
-                            conn.commit()
+                            await cursor.execute("INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES (%s, %s, %s)", (chat_id, task_id, datetime.datetime.now()))
+                            await cursor.execute("SELECT reward FROM tasks WHERE id=%s", (task_id,))
+                            reward = (await cursor.fetchone())["reward"]
+                            await cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (reward, chat_id))
+                            await conn.commit()
                             await query.answer(f"Task completed! You earned ${reward}.")
                         else:
                             await query.answer("You are not in the group/channel yet.")
@@ -901,10 +924,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(content, reply_markup=InlineKeyboardMarkup(keyboard))
         elif data == "help":
             await help_menu(update, context)
+        elif data == "toggle_reminder":
+            # Already handled above, but kept for consistency
+            pass
         elif data == "enable_reminders":
             try:
-                cursor.execute("UPDATE users SET alarm_setting=1 WHERE chat_id=%s", (chat_id,))
-                conn.commit()
+                await cursor.execute("UPDATE users SET alarm_setting=1 WHERE chat_id=%s", (chat_id,))
+                await conn.commit()
                 await query.edit_message_text(
                     "✅ Daily reminders enabled!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
@@ -914,8 +940,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("An error occurred. Please try again.")
         elif data == "disable_reminders":
             try:
-                cursor.execute("UPDATE users SET alarm_setting=0 WHERE chat_id=%s", (chat_id,))
-                conn.commit()
+                await cursor.execute("UPDATE users SET alarm_setting=0 WHERE chat_id=%s", (chat_id,))
+                await conn.commit()
                 await query.edit_message_text(
                     "❌ Okay, daily reminders not set.",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
@@ -940,8 +966,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Processing photo for {expecting}")
     try:
         if expecting == 'reg_screenshot':
-            cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
-            conn.commit()
+            await cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
+            await conn.commit()
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
@@ -982,7 +1008,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text("Screenshot received. Awaiting admin approval.")
         del user_state[chat_id]['expecting']
-        log_interaction(chat_id, "photo_upload")
+        await log_interaction(chat_id, "photo_upload")
     except Exception as e:
         logger.error(f"Error in handle_photo: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
@@ -1000,8 +1026,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Processing document for {expecting}")
     try:
         if expecting == 'reg_screenshot':
-            cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
-            conn.commit()
+            await cursor.execute("UPDATE users SET screenshot_uploaded_at=%s WHERE chat_id=%s", (datetime.datetime.now(), chat_id))
+            await conn.commit()
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
@@ -1042,7 +1068,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text("Screenshot received. Awaiting admin approval.")
         del user_state[chat_id]['expecting']
-        log_interaction(chat_id, "document_upload")
+        await log_interaction(chat_id, "document_upload")
     except Exception as e:
         logger.error(f"Error in handle_document: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
@@ -1050,10 +1076,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     text = update.message.text.strip()
-    log_interaction(chat_id, "text_message")
+    await log_interaction(chat_id, "text_message")
     logger.info(f"user_state[{chat_id}] = {user_state.get(chat_id, 'None')}")
     if 'expecting' not in user_state.get(chat_id, {}):
-        status = get_status(chat_id)
+        status = await get_status(chat_id)
         if status == 'pending_details':
             await update.message.reply_text("Please provide your full name:")
             user_state[chat_id] = {'expecting': 'name'}
@@ -1073,6 +1099,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                 await update.message.reply_text("Please provide a valid email address.")
                 return
+            await cursor.execute("SELECT chat_id FROM users WHERE email=%s", (email,))
+            existing = await cursor.fetchone()
+            if existing and existing['chat_id'] != chat_id:
+                await update.message.reply_text("Email already registered.")
+                return
             user_state[chat_id]['email'] = email
             user_state[chat_id]['expecting'] = 'phone'
             await update.message.reply_text("Please provide your phone number (with country code, e.g., +2341234567890):")
@@ -1089,28 +1120,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not re.match(r"^@[A-Za-z0-9_]{5,}$", telegram_username):
                 await update.message.reply_text("Please provide a valid Telegram username starting with @ (e.g., @bigscott).")
                 return
-            try:
-                cursor.execute(
-                    "UPDATE users SET name=%s, email=%s, phone=%s, username=%s WHERE chat_id=%s",
-                    (user_state[chat_id]['name'], user_state[chat_id]['email'], user_state[chat_id]['phone'], telegram_username, chat_id)
-                )
-                conn.commit()
-                cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
-                pkg = cursor.fetchone()["package"]
-                keyboard = [[InlineKeyboardButton("Finalize Registration", callback_data=f"finalize_reg_{chat_id}")]]
-                await context.bot.send_message(
-                    ADMIN_ID,
-                    f"🆕 User Details Received:\nUser ID: {chat_id}\nUsername: {telegram_username}\nPackage: {pkg}\nEmail: {user_state[chat_id]['email']}\nName: {user_state[chat_id]['name']}\nPhone: {user_state[chat_id]['phone']}\n\nPlease finalize registration by providing credentials.",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                await update.message.reply_text(
-                    "✅ Details received! Awaiting admin finalization.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
-                )
-                del user_state[chat_id]
-            except psycopg.Error as e:
-                logger.error(f"Database error in pending_details: {e}")
-                await update.message.reply_text("An error occurred. Please try again.")
+            await cursor.execute("SELECT chat_id FROM users WHERE username=%s", (telegram_username,))
+            existing = await cursor.fetchone()
+            if existing and existing['chat_id'] != chat_id:
+                await update.message.reply_text("Username already registered.")
+                return
+            await cursor.execute(
+                "UPDATE users SET name=%s, email=%s, phone=%s, username=%s WHERE chat_id=%s",
+                (user_state[chat_id]['name'], user_state[chat_id]['email'], user_state[chat_id]['phone'], telegram_username, chat_id)
+            )
+            await conn.commit()
+            await cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
+            pkg = (await cursor.fetchone())["package"]
+            keyboard = [[InlineKeyboardButton("Finalize Registration", callback_data=f"finalize_reg_{chat_id}")]]
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🆕 User Details Received:\nUser ID: {chat_id}\nUsername: {telegram_username}\nPackage: {pkg}\nEmail: {user_state[chat_id]['email']}\nName: {user_state[chat_id]['name']}\nPhone: {user_state[chat_id]['phone']}\n\nPlease finalize registration by providing credentials.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            await update.message.reply_text(
+                "✅ Details received! Awaiting admin finalization.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
+            )
+            del user_state[chat_id]
         elif expecting == 'coupon_quantity':
             try:
                 quantity = int(text)
@@ -1126,20 +1158,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 await update.message.reply_text("Please enter a valid positive integer.")
         elif expecting == 'faq':
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"FAQ from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}): {text}"
-            )
+            await context.bot.send_message(ADMIN_ID, f"FAQ from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}): {text}")
             await update.message.reply_text("Thank you! We’ll get back to you soon.")
             del user_state[chat_id]['expecting']
         elif expecting == 'password_recovery':
-            cursor.execute("SELECT username, email, password FROM users WHERE email=%s AND chat_id=%s AND payment_status='registered'", (text, chat_id))
-            user = cursor.fetchone()
+            await cursor.execute("SELECT username, email, password FROM users WHERE email=%s AND chat_id=%s AND payment_status='registered'", (text, chat_id))
+            user = await cursor.fetchone()
             if user:
                 username, email, _ = user.values()
                 new_password = secrets.token_urlsafe(8)
-                cursor.execute("UPDATE users SET password=%s WHERE chat_id=%s", (new_password, chat_id))
-                conn.commit()
+                await cursor.execute("UPDATE users SET password=%s WHERE chat_id=%s", (new_password, chat_id))
+                await conn.commit()
                 await context.bot.send_message(
                     chat_id,
                     f"Your password has been reset.\nNew Password: {new_password}\nKeep it safe and use 'Password Recovery' if needed again."
@@ -1164,10 +1193,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for code in codes:
                 code = code.strip()
                 if code:
-                    cursor.execute("INSERT INTO coupons (payment_id, code) VALUES (%s, %s)", (payment_id, code))
-            conn.commit()
-            cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
-            user_chat_id = cursor.fetchone()["chat_id"]
+                    await cursor.execute("INSERT INTO coupons (payment_id, code) VALUES (%s, %s)", (payment_id, code))
+            await conn.commit()
+            await cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
+            user_chat_id = (await cursor.fetchone())["chat_id"]
             await context.bot.send_message(
                 user_chat_id,
                 "🎉 Your coupon purchase is approved!\n\nHere are your coupons:\n" + "\n".join(codes)
@@ -1181,25 +1210,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             username, password = lines
             for_user = user_state[chat_id]['for_user']
-            cursor.execute(
+            await cursor.execute(
                 "UPDATE users SET username=%s, password=%s, payment_status='registered', registration_date=%s WHERE chat_id=%s",
                 (username, password, datetime.datetime.now(), for_user)
             )
-            conn.commit()
-            cursor.execute("SELECT package, referred_by FROM users WHERE chat_id=%s", (for_user,))
-            row = cursor.fetchone()
+            await conn.commit()
+            await cursor.execute("SELECT package, referred_by FROM users WHERE chat_id=%s", (for_user,))
+            row = await cursor.fetchone()
             if row:
                 package, referred_by = row.values()
                 if referred_by:
                     additional_reward = 0.4 if package == "Standard" else 0.9
-                    cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (additional_reward, referred_by))
-                    conn.commit()
+                    await cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (additional_reward, referred_by))
+                    await conn.commit()
             await context.bot.send_message(
                 for_user,
                 f"🎉 Registration successful! Your username is\n {username}\n and password is\n {password}\n\n Join the group using the link below to access your Mentorship forum:\n {GROUP_LINK}"
             )
-            cursor.execute("SELECT package, email, name, phone FROM users WHERE chat_id=%s", (for_user,))
-            user_details = cursor.fetchone()
+            await cursor.execute("SELECT package, email, name, phone FROM users WHERE chat_id=%s", (for_user,))
+            user_details = await cursor.fetchone()
             if user_details:
                 pkg, email, full_name, phone = user_details.values()
                 await context.bot.send_message(
@@ -1212,13 +1241,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
             ]
             await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
-            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={for_user}"))], [KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_BASE}/aviator?chat_id={chat_id}"))]]
+            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={for_user}"))], [KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{AVIATOR_URL}?chat_id={for_user}"))]]
             await context.bot.send_message(
                 for_user,
                 "Use the button below to engage in other processes",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
             del user_state[chat_id]
+        elif expecting == 'broadcast_message' and chat_id == ADMIN_ID:
+            await cursor.execute("SELECT chat_id FROM users WHERE payment_status='registered'")
+            users = await cursor.fetchall()
+            for user in users:
+                try:
+                    await context.bot.send_message(user['chat_id'], text)
+                except Exception as e:
+                    logger.error(f"Failed to send broadcast to {user['chat_id']}: {e}")
+            await update.message.reply_text("Broadcast sent.")
+            del user_state[chat_id]
+    except psycopg.Error as e:
+        logger.error(f"Database error in handle_text: {e}")
+        await update.message.reply_text("An error occurred. Please try again.")
     except Exception as e:
         logger.error(f"Error in handle_text: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
@@ -1226,7 +1268,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Job functions
 async def check_registration_payment(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data['chat_id']
-    status = get_status(chat_id)
+    status = await get_status(chat_id)
     if status == 'pending_payment':
         keyboard = [[InlineKeyboardButton("Payment Approval Stats", callback_data="check_approval")]]
         await context.bot.send_message(chat_id, "Your payment is still being reviewed. Click below to check status:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1238,8 +1280,8 @@ async def check_registration_payment(context: ContextTypes.DEFAULT_TYPE):
 async def check_coupon_payment(context: ContextTypes.DEFAULT_TYPE):
     payment_id = context.job.data['payment_id']
     try:
-        cursor.execute("SELECT status, chat_id FROM payments WHERE id=%s", (payment_id,))
-        row = cursor.fetchone()
+        await cursor.execute("SELECT status, chat_id FROM payments WHERE id=%s", (payment_id,))
+        row = await cursor.fetchone()
         if row and row["status"] == 'pending_payment':
             chat_id = row["chat_id"]
             keyboard = [[InlineKeyboardButton("Payment Approval Stats", callback_data="check_approval")]]
@@ -1249,12 +1291,12 @@ async def check_coupon_payment(context: ContextTypes.DEFAULT_TYPE):
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
     try:
-        cursor.execute("SELECT chat_id FROM users WHERE alarm_setting=1")
-        user_ids = [row["chat_id"] for row in cursor.fetchall()]
+        await cursor.execute("SELECT chat_id FROM users WHERE alarm_setting=1")
+        user_ids = [row["chat_id"] for row in await cursor.fetchall()]
         for user_id in user_ids:
             try:
                 await context.bot.send_message(user_id, "🌟 Daily Reminder: Complete your Tapify tasks to maximize your earnings!")
-                log_interaction(user_id, "daily_reminder")
+                await log_interaction(user_id, "daily_reminder")
             except Exception as e:
                 logger.error(f"Failed to send reminder to {user_id}: {e}")
     except psycopg.Error as e:
@@ -1264,26 +1306,26 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now()
     start_time = now - datetime.timedelta(days=1)
     try:
-        cursor.execute("SELECT COUNT(*) FROM users WHERE registration_date >= %s", (start_time,))
-        new_users = cursor.fetchone()["count"]
-        cursor.execute("""
+        await cursor.execute("SELECT COUNT(*) FROM users WHERE registration_date >= %s", (start_time,))
+        new_users = (await cursor.fetchone())["count"]
+        await cursor.execute("""
             SELECT SUM(CASE package WHEN 'Standard' THEN 10000 WHEN 'X' THEN 14000 ELSE 0 END)
             FROM users
             WHERE approved_at >= %s AND payment_status = 'registered'
         """, (start_time,))
-        reg_payments = cursor.fetchone()["sum"] or 0
-        cursor.execute("SELECT SUM(total_amount) FROM payments WHERE approved_at >= %s AND status = 'approved'", (start_time,))
-        coupon_payments = cursor.fetchone()["sum"] or 0
+        reg_payments = (await cursor.fetchone())["sum"] or 0
+        await cursor.execute("SELECT SUM(total_amount) FROM payments WHERE approved_at >= %s AND status = 'approved'", (start_time,))
+        coupon_payments = (await cursor.fetchone())["sum"] or 0
         total_payments = reg_payments + coupon_payments
-        cursor.execute("SELECT COUNT(*) FROM user_tasks WHERE completed_at >= %s", (start_time,))
-        tasks_completed = cursor.fetchone()["count"]
-        cursor.execute("""
+        await cursor.execute("SELECT COUNT(*) FROM user_tasks WHERE completed_at >= %s", (start_time,))
+        tasks_completed = (await cursor.fetchone())["count"]
+        await cursor.execute("""
             SELECT SUM(t.reward)
             FROM user_tasks ut
             JOIN tasks t ON ut.task_id = t.id
             WHERE ut.completed_at >= %s
         """, (start_time,))
-        total_distributed = cursor.fetchone()["sum"] or 0
+        total_distributed = (await cursor.fetchone())["sum"] or 0
         text = (
             f"📊 Daily Summary ({now.strftime('%Y-%m-%d')}):\n\n"
             f"• New Users: {new_users}\n"
@@ -1300,8 +1342,8 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     try:
-        cursor.execute("SELECT payment_status, package FROM users WHERE chat_id=%s", (chat_id,))
-        user = cursor.fetchone()
+        await cursor.execute("SELECT payment_status, package FROM users WHERE chat_id=%s", (chat_id,))
+        user = await cursor.fetchone()
         keyboard = [
             [InlineKeyboardButton("How It Works", callback_data="how_it_works")],
             [InlineKeyboardButton("Purchase Coupon", callback_data="coupon")],
@@ -1322,6 +1364,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_keyboard = [["/menu(🔙)"]]
         if user and user["payment_status"] == 'registered':
             reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
+            reply_keyboard.append([KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{AVIATOR_URL}?chat_id={chat_id}"))])
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
@@ -1336,21 +1379,21 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Use the button below 'ONLY' if you get stuck on a process:",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
-        log_interaction(chat_id, "show_main_menu")
+        await log_interaction(chat_id, "show_main_menu")
     except psycopg.Error as e:
         logger.error(f"Database error in show_main_menu: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
 
 async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.callback_query.from_user.id
-    status = get_status(chat_id)
+    status = await get_status(chat_id)
     keyboard = [[InlineKeyboardButton(topic["label"], callback_data=key)] for key, topic in HELP_TOPICS.items()]
     if status == 'registered':
         keyboard.append([InlineKeyboardButton("👥 Refer a Friend", callback_data="refer_friend")])
     keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
     query = update.callback_query
     await query.edit_message_text("What would you like help with?", reply_markup=InlineKeyboardMarkup(keyboard))
-    log_interaction(chat_id, "help_menu")
+    await log_interaction(chat_id, "help_menu")
 
 # ============================== START: TAP + AVIATOR ADDON ==============================
 # This block adds:
@@ -1358,12 +1401,7 @@ async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #  - API: /api/tap (Notcoin-style tapper)
 #  - API: /api/aviator/* (start, cashout, close, recent)
 #  - WebApp pages: /tap and /aviator (with top nav)
-#  - No changes to your existing code are required beyond adding 2 keyboard buttons (see below).
-# ---------------------------------------------------------------------------------------
-
-# ---- Imports used here only (won't collide) ----
-# import math, secrets, random, datetime  # Already imported earlier
-# from flask import request, jsonify  # Already imported
+#  - No changes to your existing code are required beyond adding 2 keyboard buttons (see above).
 
 # ---- Optional: constant for Aviator multiplier growth (front-end uses same k=0.00012) ----
 K = 0.00012  # growth per millisecond
@@ -1379,34 +1417,6 @@ def _sample_crash_point() -> float:
     crash = 1.02 + extra * 2.2
     return max(1.02, round(crash, 2))
 
-# ================== DATABASE ADDITIONS ==================
-# (Safe to run repeatedly — uses IF NOT EXISTS)
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS aviator_rounds (
-  id BIGSERIAL PRIMARY KEY,
-  chat_id BIGINT NOT NULL,
-  seed TEXT NOT NULL,
-  crash_point DOUBLE PRECISION NOT NULL,
-  start_time TIMESTAMP NOT NULL,
-  end_time TIMESTAMP,
-  status TEXT NOT NULL DEFAULT 'active' -- active|crashed|cashed
-);
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS aviator_plays (
-  id BIGSERIAL PRIMARY KEY,
-  round_id BIGINT REFERENCES aviator_rounds(id),
-  chat_id BIGINT NOT NULL,
-  bet_amount DOUBLE PRECISION NOT NULL,
-  cashout_multiplier DOUBLE PRECISION,
-  payout DOUBLE PRECISION,
-  outcome TEXT, -- win|lose|none
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-""")
-cursor.execute("CREATE INDEX IF NOT EXISTS idx_aviator_rounds_chat ON aviator_rounds(chat_id);")
-cursor.execute("CREATE INDEX IF NOT EXISTS idx_aviator_plays_round ON aviator_plays(round_id);")
-
 # ================== API ENDPOINTS ==================
 
 # --- Notcoin-style tapper: adds +0.01 per tap (adjust if you like) ---
@@ -1417,9 +1427,10 @@ def api_tap():
     if not chat_id:
         return jsonify({"ok": False, "error": "chat_id required"}), 400
     # credit only registered users
-    cursor.execute("UPDATE users SET balance = COALESCE(balance,0) + 0.01 WHERE chat_id=%s AND payment_status='registered'", (chat_id,))
-    cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
-    row = cursor.fetchone()
+    loop.run_until_complete(cursor.execute("UPDATE users SET balance = COALESCE(balance,0) + 0.01 WHERE chat_id=%s AND payment_status='registered'", (chat_id,)))
+    loop.run_until_complete(conn.commit())
+    loop.run_until_complete(cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,)))
+    row = loop.run_until_complete(cursor.fetchone())
     if not row:
         return jsonify({"ok": False, "error": "user not found"}), 404
     return jsonify({"ok": True, "balance": float(row["balance"])})
@@ -1432,28 +1443,30 @@ def api_aviator_start():
     bet = float(d.get("bet_amount", 0) or 0)
     if chat_id <= 0 or bet <= 0:
         return jsonify({"ok": False, "error": "invalid chat_id/bet"}), 400
-    cursor.execute("SELECT balance, payment_status FROM users WHERE chat_id=%s", (chat_id,))
-    u = cursor.fetchone()
+    loop.run_until_complete(cursor.execute("SELECT balance, payment_status FROM users WHERE chat_id=%s", (chat_id,)))
+    u = loop.run_until_complete(cursor.fetchone())
     if not u or u["payment_status"] != "registered":
         return jsonify({"ok": False, "error": "Not registered"}), 403
     if float(u["balance"] or 0) < bet:
         return jsonify({"ok": False, "error": "Insufficient balance"}), 400
 
     # take bet
-    cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (bet, chat_id))
+    loop.run_until_complete(cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (bet, chat_id)))
+    loop.run_until_complete(conn.commit())
     seed = secrets.token_hex(8)
     crash = _sample_crash_point()
     now = datetime.datetime.utcnow()
-    cursor.execute(
+    loop.run_until_complete(cursor.execute(
         "INSERT INTO aviator_rounds(chat_id, seed, crash_point, start_time) "
         "VALUES(%s,%s,%s,%s) RETURNING id, crash_point",
         (chat_id, seed, crash, now)
-    )
-    rd = cursor.fetchone()
-    cursor.execute(
+    ))
+    rd = loop.run_until_complete(cursor.fetchone())
+    loop.run_until_complete(cursor.execute(
         "INSERT INTO aviator_plays(round_id, chat_id, bet_amount, outcome) VALUES(%s,%s,%s,'none')",
         (rd["id"], chat_id, bet)
-    )
+    ))
+    loop.run_until_complete(conn.commit())
     return jsonify({"ok": True, "round": {"id": rd["id"], "crash_point": float(rd["crash_point"])}})
 
 # --- Aviator: cash out (credits payout if before crash) ---
@@ -1465,13 +1478,13 @@ def api_aviator_cashout():
     if round_id <= 0:
         return jsonify({"ok": False, "error": "round_id required"}), 400
 
-    cursor.execute("""
+    loop.run_until_complete(cursor.execute("""
         SELECT r.id, r.chat_id, r.crash_point, r.start_time, r.status, p.bet_amount
         FROM aviator_rounds r
         JOIN aviator_plays p ON p.round_id = r.id
         WHERE r.id = %s
-    """, (round_id,))
-    row = cursor.fetchone()
+    """, (round_id,)))
+    row = loop.run_until_complete(cursor.fetchone())
     if not row:
         return jsonify({"ok": False, "error": "Round not found"}), 404
     if row["status"] != "active":
@@ -1484,17 +1497,19 @@ def api_aviator_cashout():
 
     if current_m >= float(row["crash_point"]) - 1e-12:
         # too late; crashed
-        cursor.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,))
-        cursor.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,))
+        loop.run_until_complete(cursor.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,)))
+        loop.run_until_complete(cursor.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,)))
+        loop.run_until_complete(conn.commit())
         return jsonify({"ok": False, "error": f"Crashed at x{row['crash_point']:.2f}"}), 409
 
     payout = float(row["bet_amount"]) * current_m
-    cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (payout, row["chat_id"]))
-    cursor.execute(
+    loop.run_until_complete(cursor.execute("UPDATE users SET balance = balance + %s WHERE chat_id=%s", (payout, row["chat_id"])))
+    loop.run_until_complete(cursor.execute(
         "UPDATE aviator_plays SET outcome='win', cashout_multiplier=%s, payout=%s WHERE round_id=%s",
         (current_m, payout, round_id)
-    )
-    cursor.execute("UPDATE aviator_rounds SET status='cashed', end_time=NOW() WHERE id=%s", (round_id,))
+    ))
+    loop.run_until_complete(cursor.execute("UPDATE aviator_rounds SET status='cashed', end_time=NOW() WHERE id=%s", (round_id,)))
+    loop.run_until_complete(conn.commit())
     return jsonify({"ok": True, "cashout_multiplier": float(current_m), "payout": float(payout)})
 
 # --- Aviator: close (server marks crash; used when client detects crash) ---
@@ -1504,22 +1519,21 @@ def api_aviator_close():
     round_id = int(d.get("round_id", 0) or 0)
     if round_id <= 0:
         return jsonify({"ok": True})
-    cursor.execute("SELECT status FROM aviator_rounds WHERE id=%s", (round_id,))
-    r = cursor.fetchone()
+    loop.run_until_complete(cursor.execute("SELECT status FROM aviator_rounds WHERE id=%s", (round_id,)))
+    r = loop.run_until_complete(cursor.fetchone())
     if r and r["status"] == "active":
-        cursor.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,))
-        cursor.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,))
+        loop.run_until_complete(cursor.execute("UPDATE aviator_rounds SET status='crashed', end_time=NOW() WHERE id=%s", (round_id,)))
+        loop.run_until_complete(cursor.execute("UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s", (round_id,)))
+        loop.run_until_complete(conn.commit())
     return jsonify({"ok": True})
 
 # --- Aviator: last 12 crash points for chips display (per user) ---
 @app.get("/api/aviator/recent/<int:chat_id>")
 def api_aviator_recent(chat_id: int):
-    cursor.execute("SELECT crash_point FROM aviator_rounds WHERE chat_id=%s ORDER BY id DESC LIMIT 12", (chat_id,))
-    return jsonify([float(r["crash_point"]) for r in cursor.fetchall()])
+    loop.run_until_complete(cursor.execute("SELECT crash_point FROM aviator_rounds WHERE chat_id=%s ORDER BY id DESC LIMIT 12", (chat_id,)))
+    return jsonify([float(r["crash_point"]) for r in loop.run_until_complete(cursor.fetchall())])
 
 # ================== WEBAPP PAGES (TAP & AVIATOR with top nav) ==================
-# NOTE: These are minimal but pretty. You can re-skin easily.
-
 TAPIFY_HTML = """<!doctype html>
 <html>
 <head>
@@ -1550,11 +1564,11 @@ TAPIFY_HTML = """<!doctype html>
 const url=new URL(location.href), chat_id=url.searchParams.get('chat_id');
 const balEl=document.getElementById('bal'), greet=document.getElementById('greet');
 async function fetchUser(){
-  const r=await fetch(`/api/user/${chat_id}`);
+  const r=await fetch(`/api/tap/user/${chat_id}`);
   if(!r.ok){greet.textContent='⚠️ Registration required.';return}
   const j=await r.json();
   greet.textContent=`Welcome, @${j.username||'player'}`;
-  balEl.textContent=Number(j.balance||0).toFixed(2);
+balEl.textContent=Number(j.balance||0).toFixed(2);
 }
 async function tap(){
   const r=await fetch('/api/tap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id})});
@@ -1581,7 +1595,7 @@ AVIATOR_HTML = """<!doctype html>
     button{cursor:pointer;padding:12px 18px;border-radius:12px;font-weight:bold;border:0}
     .primary{background:#ffcd4d;color:#000}
     .good{background:#00d68f;color:#021}
-    .bad{background:#ff5c7a;color:#fff}
+    .bad{background:#ff5c7a;color:#021}
     canvas{width:100%;height:340px;background:linear-gradient(180deg,#0c1224,#0a0f1d);border-radius:12px}
     .pill{display:inline-block;background:#17203a;padding:6px 10px;border-radius:999px;color:#c9d6ff;margin-right:6px}
   </style>
@@ -1659,13 +1673,14 @@ function loop(){
 function pill(v){ const d=document.createElement('span'); d.className='pill';
 d.textContent='x'+v.toFixed(2); if(v>=2) d.style.background='#0e2c24'; return d; }
 
-async function syncBalance(){
-  const r=await fetch(`/api/user/${chat_id}`); if(r.ok){const j=await r.json();
-  balEl.textContent=Number(j.balance||0).toFixed(2);}
+async function syncBalance(){ 
+  const r=await fetch(`/api/tap/user/${chat_id}`); if(r.ok){const j=await r.json();
+balEl.textContent=Number(j.balance||0).toFixed(2);} 
 }
+
 async function loadRecent(){
   const r=await fetch(`/api/aviator/recent/${chat_id}`); if(r.ok){ const a=await r.json();
-  recent.innerHTML=''; a.forEach(x=>recent.appendChild(pill(x))); }
+recent.innerHTML=''; a.forEach(x=>recent.appendChild(pill(x))); } 
 }
 
 document.getElementById('start').onclick=async()=>{
@@ -1676,20 +1691,20 @@ document.getElementById('start').onclick=async()=>{
   const r=await fetch('/api/aviator/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id,bet_amount:bet})});
   const j=await r.json();
   if(!j.ok){ msg.textContent=j.error||'Cannot start round';
-  document.getElementById('start').disabled=false; return; }
+document.getElementById('start').disabled=false; return; }
   round=j.round; ridEl.textContent=round.id; startedAt=performance.now(); crashed=false;
-  cashed=false; crEl.textContent='?';
+cashed=false; crEl.textContent='?';
   msg.textContent='✈️ Flying… Tap CASH OUT anytime.';
-  document.getElementById('cash').disabled=false;
-  document.getElementById('cancel').disabled=false; syncBalance();
+document.getElementById('cash').disabled=false;
+document.getElementById('cancel').disabled=false; syncBalance();
   document.getElementById('cancel').onclick=async()=>{ if(!round) return;
-  document.getElementById('cancel').disabled=true;
+document.getElementById('cancel').disabled=true;
     const rr=await fetch('/api/aviator/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({round_id:round.id})});
     msg.textContent='Cancelled (treated as crash).'; await syncBalance();
   };
   document.getElementById('cash').onclick=async()=>{
     if(!round||crashed||cashed) return; cashed=true;
-    document.getElementById('cash').disabled=true;
+document.getElementById('cash').disabled=true;
     const ms=performance.now()-startedAt, m=multiplierAt(ms);
     const rr=await fetch('/api/aviator/cashout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({round_id:round.id,client_multiplier:m})});
     const jj=await rr.json();
@@ -1699,7 +1714,6 @@ document.getElementById('start').onclick=async()=>{
   };
   cancelAnimationFrame(anim); loop();
 };
-
 (async()=>{ await syncBalance(); await loadRecent(); })();
 </script>
 </body>
@@ -1720,41 +1734,36 @@ def app_aviator():
 
 # ================================= END: TAP + AVIATOR ADDON =================================
 
-# Main
-def main():
-    # Removed: keep_alive() - Flask is now main
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        # Add handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("menu", show_main_menu))
-        application.add_handler(CommandHandler("game", cmd_game))
-        application.add_handler(CommandHandler("stats", stats))
-        application.add_handler(CommandHandler("reset", reset_state))
-        application.add_handler(CommandHandler("support", support))
-        application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("add_task", add_task))
-        application.add_handler(CallbackQueryHandler(button_handler))
-        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        # Add job queue tasks
-        application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
-        application.job_queue.run_daily(daily_summary, time=datetime.time(hour=20, minute=0))
-        # Log that the bot is running
-        logger.info("Bot is up and running...")
-        # Added: Set up webhook asynchronously
-        async def set_wh():
-            await application.initialize()
-            await application.start()  # Starts job_queue
-            await application.bot.set_webhook(url=WEBHOOK_URL)
-        asyncio.run(set_wh())
-        # Run Flask as main server (replaces polling)
-        port = int(os.getenv('PORT', 8080))
-        app.run(host='0.0.0.0', port=port)
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        print("Failed to start bot. Check logs for details.")
+def run_flask():
+    app.run(host='0.0.0.0', port=PORT)
+
+async def main_async():
+    global application, loop
+    loop = asyncio.get_running_loop()
+    await setup_db()
+    application = Application.builder().token(BOT_TOKEN).build()
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", show_main_menu))
+    application.add_handler(CommandHandler("game", cmd_game))
+    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("reset", reset_state))
+    application.add_handler(CommandHandler("support", support))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("add_task", add_task))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Add job queue tasks
+    application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
+    application.job_queue.run_daily(daily_summary, time=datetime.time(hour=20, minute=0))
+    # Log that the bot is running
+    logger.info("Bot is up and running...")
+    await application.initialize()
+    await application.bot.set_webhook(url=WEBHOOK_URL + BOT_TOKEN)
 
 if __name__ == "__main__":
-    main()
+    t = Thread(target=run_flask)
+    t.start()
+    asyncio.run(main_async())
