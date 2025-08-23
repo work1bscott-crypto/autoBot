@@ -33,6 +33,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 #from pydub import AudioSegment
 from flask import Flask, request, jsonify
 from psycopg_pool import AsyncConnectionPool
+from asgiref.wsgi import WsgiToAsgi
 
 # Flask setup for Render keep-alive and APIs
 app = Flask(__name__)
@@ -1788,5 +1789,7 @@ async def main():
 
 if __name__ == "__main__":
     import uvicorn
+    from asgiref.wsgi import WsgiToAsgi
     asyncio.run(main())
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    asgi_app = WsgiToAsgi(app)  # Wrap Flask app for ASGI compatibility
+    uvicorn.run(asgi_app, host="0.0.0.0", port=PORT)
