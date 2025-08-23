@@ -55,7 +55,7 @@ GROUP_LINK = os.getenv("GROUP_LINK", "")
 SITE_LINK = os.getenv("SITE_LINK", "")
 AI_BOOST_LINK = os.getenv("AI_BOOST_LINK", "")
 DAILY_TASK_LINK = os.getenv("DAILY_TASK_LINK", "")
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://tapify.onrender.com/app")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 
 # Validate environment variables
 if not BOT_TOKEN:
