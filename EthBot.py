@@ -1375,5 +1375,408 @@ async def api_tap():
             if not row:
                 return jsonify({"ok": False, "error": "user not found"}), 404
             return jsonify({"ok": True, "balance": float(row["balance"])})
+            
+# Aviator API Endpoints
+@app.post("/api/aviator/start")
+async def api_aviator_start():
+    data = request.get_json(force=True)
+    logger.info(f"API /aviator/start called with data: {data}")
+    chat_id = int(data.get("chat_id", 0) or 0)
+    bet_amount = float(data.get("bet_amount", 0) or 0)
+    if not chat_id or bet_amount <= 0:
+        return jsonify({"ok": False, "error": "Invalid chat_id or bet_amount"}), 400
+    async with conn_pool.connection() as conn:
+        async with conn.cursor(row_factory=psycopg.rows.dict_row) as cursor:
+            # Check if user is registered and has sufficient balance
+            await cursor.execute("SELECT balance, payment_status FROM users WHERE chat_id=%s", (chat_id,))
+            user = await cursor.fetchone()
+            if not user or user["payment_status"] != "registered":
+                return jsonify({"ok": False, "error": "User not registered"}), 403
+            if user["balance"] < bet_amount:
+                return jsonify({"ok": False, "error": "Insufficient balance"}), 403
+            # Deduct bet amount
+            await cursor.execute("UPDATE users SET balance = balance - %s WHERE chat_id=%s", (bet_amount, chat_id))
+            # Generate round details
+            seed = secrets.token_hex(16)
+            crash_point = _sample_crash_point()
+            start_time = datetime.datetime.now()
+            # Create new round
+            await cursor.execute(
+                """
+                INSERT INTO aviator_rounds (chat_id, seed, crash_point, start_time, status)
+                VALUES (%s, %s, %s, %s, 'active')
+                RETURNING id
+                """,
+                (chat_id, seed, crash_point, start_time)
+            )
+            round_id = (await cursor.fetchone())["id"]
+            # Record play
+            await cursor.execute(
+                """
+                INSERT INTO aviator_plays (round_id, chat_id, bet_amount, outcome)
+                VALUES (%s, %s, %s, 'none')
+                """,
+                (round_id, chat_id, bet_amount)
+            )
+            await conn.commit()
+    return jsonify({
+        "ok": True,
+        "round_id": round_id,
+        "seed": seed,
+        "start_time": start_time.isoformat()
+    }), 200
 
-@app.post("/api/aviator
+@app.post("/api/aviator/cashout")
+async def api_aviator_cashout():
+    data = request.get_json(force=True)
+    logger.info(f"API /aviator/cashout called with data: {data}")
+    chat_id = int(data.get("chat_id", 0) or 0)
+    round_id = int(data.get("round_id", 0) or 0)
+    if not chat_id or not round_id:
+        return jsonify({"ok": False, "error": "Invalid chat_id or round_id"}), 400
+    async with conn_pool.connection() as conn:
+        async with conn.cursor(row_factory=psycopg.rows.dict_row) as cursor:
+            # Verify round
+            await cursor.execute(
+                """
+                SELECT id, crash_point, start_time, status
+                FROM aviator_rounds
+                WHERE id=%s AND chat_id=%s AND status='active'
+                """,
+                (round_id, chat_id)
+            )
+            round_data = await cursor.fetchone()
+            if not round_data:
+                return jsonify({"ok": False, "error": "Round not found or already ended"}), 404
+            # Calculate current multiplier
+            elapsed_ms = (datetime.datetime.now() - round_data["start_time"]).total_seconds() * 1000
+            current_multiplier = _multiplier_at_ms(elapsed_ms)
+            if current_multiplier >= round_data["crash_point"]:
+                # Round has crashed
+                await cursor.execute(
+                    """
+                    UPDATE aviator_rounds SET status='crashed', end_time=%s WHERE id=%s
+                    """,
+                    (datetime.datetime.now(), round_id)
+                )
+                await cursor.execute(
+                    """
+                    UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s AND chat_id=%s
+                    """,
+                    (round_id, chat_id)
+                )
+                await conn.commit()
+                return jsonify({
+                    "ok": False,
+                    "error": "Round crashed",
+                    "crash_point": round_data["crash_point"]
+                }), 400
+            # Process cashout
+            await cursor.execute(
+                """
+                SELECT bet_amount FROM aviator_plays WHERE round_id=%s AND chat_id=%s
+                """,
+                (round_id, chat_id)
+            )
+            bet_amount = (await cursor.fetchone())["bet_amount"]
+            payout = bet_amount * current_multiplier
+            await cursor.execute(
+                """
+                UPDATE aviator_plays
+                SET cashout_multiplier=%s, payout=%s, outcome='win'
+                WHERE round_id=%s AND chat_id=%s
+                """,
+                (current_multiplier, payout, round_id, chat_id)
+            )
+            await cursor.execute(
+                """
+                UPDATE aviator_rounds SET status='cashed', end_time=%s WHERE id=%s
+                """,
+                (datetime.datetime.now(), round_id)
+            )
+            await cursor.execute(
+                "UPDATE users SET balance = balance + %s WHERE chat_id=%s",
+                (payout, chat_id)
+            )
+            await cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
+            balance = (await cursor.fetchone())["balance"]
+            await conn.commit()
+    return jsonify({
+        "ok": True,
+        "multiplier": round(current_multiplier, 2),
+        "payout": round(payout, 2),
+        "balance": balance
+    }), 200
+
+@app.get("/api/aviator/status")
+async def api_aviator_status():
+    data = request.args
+    chat_id = int(data.get("chat_id", 0) or 0)
+    round_id = int(data.get("round_id", 0) or 0)
+    if not chat_id or not round_id:
+        return jsonify({"ok": False, "error": "Invalid chat_id or round_id"}), 400
+    async with conn_pool.connection() as conn:
+        async with conn.cursor(row_factory=psycopg.rows.dict_row) as cursor:
+            await cursor.execute(
+                """
+                SELECT id, seed, crash_point, start_time, status
+                FROM aviator_rounds
+                WHERE id=%s AND chat_id=%s
+                """,
+                (round_id, chat_id)
+            )
+            round_data = await cursor.fetchone()
+            if not round_data:
+                return jsonify({"ok": False, "error": "Round not found"}), 404
+            status = round_data["status"]
+            response = {
+                "ok": True,
+                "round_id": round_data["id"],
+                "status": status,
+                "seed": round_data["seed"]
+            }
+            if status == "active":
+                elapsed_ms = (datetime.datetime.now() - round_data["start_time"]).total_seconds() * 1000
+                current_multiplier = _multiplier_at_ms(elapsed_ms)
+                response["current_multiplier"] = round(current_multiplier, 2)
+                if current_multiplier >= round_data["crash_point"]:
+                    await cursor.execute(
+                        """
+                        UPDATE aviator_rounds SET status='crashed', end_time=%s WHERE id=%s
+                        """,
+                        (datetime.datetime.now(), round_id)
+                    )
+                    await cursor.execute(
+                        """
+                        UPDATE aviator_plays SET outcome='lose' WHERE round_id=%s AND chat_id=%s
+                        """,
+                        (round_id, chat_id)
+                    )
+                    await conn.commit()
+                    response["status"] = "crashed"
+                    response["crash_point"] = round_data["crash_point"]
+            elif status == "crashed":
+                response["crash_point"] = round_data["crash_point"]
+            elif status == "cashed":
+                await cursor.execute(
+                    """
+                    SELECT cashout_multiplier, payout
+                    FROM aviator_plays
+                    WHERE round_id=%s AND chat_id=%s
+                    """,
+                    (round_id, chat_id)
+                )
+                play_data = await cursor.fetchone()
+                response["cashout_multiplier"] = round(play_data["cashout_multiplier"], 2)
+                response["payout"] = round(play_data["payout"], 2)
+            return jsonify(response), 200
+
+@app.route("/tap")
+async def tap_webapp():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Tapify Game</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    </head>
+    <body>
+        <h1>Tapify Game</h1>
+        <p>Balance: <span id="balance">0</span></p>
+        <button id="tapButton" style="font-size: 24px; padding: 20px;">Tap Me!</button>
+        <script>
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            const chat_id = new URLSearchParams(window.location.search).get('chat_id');
+            let balance = 0;
+
+            async function updateBalance() {
+                const response = await fetch('/api/tap', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chat_id: chat_id})
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    balance = data.balance;
+                    document.getElementById('balance').innerText = balance.toFixed(2);
+                } else {
+                    alert(data.error);
+                }
+            }
+
+            document.getElementById('tapButton').addEventListener('click', updateBalance);
+            updateBalance(); // Initial balance fetch
+        </script>
+    </body>
+    </html>
+    """
+
+@app.route("/aviator")
+async def aviator_webapp():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Aviator Game</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; }
+            #plane { font-size: 50px; position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); }
+            #multiplier { font-size: 24px; margin-top: 20px; }
+            #status { font-size: 18px; color: red; }
+            #betAmount { width: 100px; margin: 10px; }
+            button { font-size: 18px; padding: 10px 20px; margin: 5px; }
+        </style>
+    </head>
+    <body>
+        <h1>Aviator Game</h1>
+        <p>Balance: <span id="balance">0</span></p>
+        <p id="multiplier">Multiplier: 1.00x</p>
+        <p id="status"></p>
+        <div id="plane">✈️</div>
+        <input type="number" id="betAmount" placeholder="Bet Amount" step="0.01" min="0.01">
+        <br>
+        <button id="startButton">Start Round</button>
+        <button id="cashoutButton" disabled>Cash Out</button>
+        <script>
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            const chat_id = new URLSearchParams(window.location.search).get('chat_id');
+            let balance = 0;
+            let round_id = null;
+            let animationFrame;
+
+            async function fetchBalance() {
+                const response = await fetch(`/api/tap?chat_id=${chat_id}`);
+                const data = await response.json();
+                if (data.ok) {
+                    balance = data.balance;
+                    document.getElementById('balance').innerText = balance.toFixed(2);
+                }
+            }
+
+            async function startRound() {
+                const betAmount = parseFloat(document.getElementById('betAmount').value);
+                if (!betAmount || betAmount <= 0) {
+                    alert('Please enter a valid bet amount');
+                    return;
+                }
+                const response = await fetch('/api/aviator/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chat_id: chat_id, bet_amount: betAmount})
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    round_id = data.round_id;
+                    document.getElementById('startButton').disabled = true;
+                    document.getElementById('cashoutButton').disabled = false;
+                    document.getElementById('status').innerText = 'Round started!';
+                    updateMultiplier();
+                } else {
+                    alert(data.error);
+                }
+            }
+
+            async function cashOut() {
+                if (!round_id) return;
+                const response = await fetch('/api/aviator/cashout', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({chat_id: chat_id, round_id: round_id})
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    document.getElementById('status').innerText = `Cashed out at ${data.multiplier}x! Payout: $${data.payout.toFixed(2)}`;
+                    balance = data.balance;
+                    document.getElementById('balance').innerText = balance.toFixed(2);
+                    resetGame();
+                } else {
+                    document.getElementById('status').innerText = `Crashed at ${data.crash_point}x!`;
+                    resetGame();
+                }
+            }
+
+            async function updateMultiplier() {
+                if (!round_id) return;
+                const response = await fetch(`/api/aviator/status?chat_id=${chat_id}&round_id=${round_id}`);
+                const data = await response.json();
+                if (data.ok) {
+                    if (data.status === 'active') {
+                        document.getElementById('multiplier').innerText = `Multiplier: ${data.current_multiplier.toFixed(2)}x`;
+                        const plane = document.getElementById('plane');
+                        const height = Math.min(data.current_multiplier * 20, window.innerHeight - 100);
+                        plane.style.bottom = `${height}px`;
+                        animationFrame = requestAnimationFrame(updateMultiplier);
+                    } else if (data.status === 'crashed') {
+                        document.getElementById('status').innerText = `Crashed at ${data.crash_point}x!`;
+                        resetGame();
+                    } else if (data.status === 'cashed') {
+                        document.getElementById('status').innerText = `Cashed out at ${data.cashout_multiplier}x! Payout: $${data.payout.toFixed(2)}`;
+                        resetGame();
+                    }
+                } else {
+                    document.getElementById('status').innerText = data.error;
+                    resetGame();
+                }
+            }
+
+            function resetGame() {
+                cancelAnimationFrame(animationFrame);
+                document.getElementById('startButton').disabled = false;
+                document.getElementById('cashoutButton').disabled = true;
+                document.getElementById('plane').style.bottom = '20px';
+                document.getElementById('multiplier').innerText = 'Multiplier: 1.00x';
+                round_id = null;
+                fetchBalance();
+            }
+
+            document.getElementById('startButton').addEventListener('click', startRound);
+            document.getElementById('cashoutButton').addEventListener('click', cashOut);
+            fetchBalance();
+        </script>
+    </body>
+    </html>
+    """
+
+# Main bot setup
+async def main():
+    global application
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    # Handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", show_main_menu))
+    application.add_handler(CommandHandler("game", cmd_game))
+    application.add_handler(CommandHandler("support", support))
+    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("reset", reset_state))
+    application.add_handler(CommandHandler("add_task", add_task))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    application.add_error_handler(error_handler)
+
+    # Jobs
+    application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
+    application.job_queue.run_daily(daily_summary, time=datetime.time(hour=23, minute=59))
+    application.job_queue.run_repeating(clear_stale_user_state, interval=3600, first=3600)
+
+    # Database setup
+    await setup_db()
+
+    # Start webhook
+    await application.bot.set_webhook(url=WEBHOOK_URL + BOT_TOKEN)
+    logger.info(f"Webhook set to {WEBHOOK_URL + BOT_TOKEN}")
+
+if __name__ == "__main__":
+    import uvicorn
+    asyncio.run(main())
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
