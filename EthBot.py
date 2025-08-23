@@ -47,6 +47,12 @@ def webhook():
     loop.run_until_complete(application.process_update(update))
     return "ok"
 
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.update_queue.put_nowait(update)
+    return "ok", 200
+
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or "0")
@@ -436,6 +442,8 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_state[chat_id] = {'expecting': 'broadcast_message'}
     await update.message.reply_text("Please enter the broadcast message to send to all registered users:")
     await log_interaction(chat_id, "broadcast_initiated")
+
+application = Application.builder().token(BOT_TOKEN).build()
 
 # Callback handlers
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
