@@ -58,6 +58,12 @@ def webhook():
         return 'ok', 200
     return 'ok', 200
 
+# Initialize the bot application with your token
+application = Application.builder().token('YOUR_BOT_TOKEN').build()
+
+def webhook(update_data):
+    update = Update.de_json(update_data, application.bot)
+
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or "0")
