@@ -11,6 +11,8 @@
 #   AI_BOOST_LINK=your_ai_boost_link
 #   DAILY_TASK_LINK=your_daily_task_link
 #   DATABASE_URL=postgres://user:pass@host:port/dbname
+#   APP_URL=https://tapify.onrender.com  # Add this: your Render URL (no trailing slash)
+#   WEBAPP_BASE=https://tapify.onrender.com  # Add this if needed for Aviator
 #
 # Start:
 #   python main.py
@@ -31,22 +33,30 @@ from telegram.ext import (
     ContextTypes,
 )
 from pydub import AudioSegment
-from flask import Flask
-from threading import Thread
+from flask import Flask, request  # Updated: added request
+import threading
+import asyncio  # Added for async webhook setup
+import secrets  # Added: used in generate_referral_code
+import urllib.parse as urlparse
+import math, random  # From addon
 
-# Flask setup for Render keep-alive
-app = Flask('')
+# Flask setup for Render (now main server, no keep-alive thread)
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Tapify is alive!"
 
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+# Webhook route (Telegram sends updates here)
+WEBHOOK_PATH = '/' + os.getenv("BOT_TOKEN")
+@app.route(WEBHOOK_PATH, methods=['GET', 'POST'])
+def webhook():
+    if request.method == 'POST':
+        update_data = request.get_json()
+        update = Update.de_json(update_data, application.bot)
+        application.process_update(update)
+        return 'ok', 200
+    return 'ok', 200
 
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -55,7 +65,10 @@ GROUP_LINK = os.getenv("GROUP_LINK", "")
 SITE_LINK = os.getenv("SITE_LINK", "")
 AI_BOOST_LINK = os.getenv("AI_BOOST_LINK", "")
 DAILY_TASK_LINK = os.getenv("DAILY_TASK_LINK", "")
-WEBAPP_URL = os.getenv("WEBAPP_URL", "")
+APP_URL = os.getenv("APP_URL")  # Added: for webhook URL
+WEBHOOK_URL = APP_URL + WEBHOOK_PATH  # Added: full webhook URL
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://tapify.onrender.com/app")
+WEBAPP_BASE = os.getenv("WEBAPP_BASE", "https://tapify.onrender.com")  # Added if needed for Aviator
 
 # Validate environment variables
 if not BOT_TOKEN:
@@ -64,6 +77,9 @@ if not BOT_TOKEN:
 if not ADMIN_ID:
     logging.error("ADMIN_ID is required in environment (.env)")
     raise ValueError("ADMIN_ID is required")
+if not APP_URL:
+    logging.error("APP_URL is required in environment (.env)")
+    raise ValueError("APP_URL is required")
 
 # Predefined payment accounts
 PAYMENT_ACCOUNTS = {
@@ -123,8 +139,6 @@ except FileNotFoundError:
 
 # Database setup with PostgreSQL
 try:
-    import urllib.parse as urlparse
-
     url = os.getenv("DATABASE_URL")
     if not url:
         raise ValueError("DATABASE_URL must be set for PostgreSQL")
@@ -716,8 +730,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if approval['type'] == 'registration':
                 status = get_status(chat_id)
                 if status == 'pending_details':
-                    user_state[chat_id] = {'expecting': 'name'}
                     await context.bot.send_message(chat_id, "Payment approved. Please provide your full name:")
+                    user_state[chat_id] = {'expecting': 'name'}
                 elif status == 'registered':
                     await context.bot.send_message(chat_id, "Your registration is complete.")
                 else:
@@ -1106,7 +1120,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 await update.message.reply_text("Please enter a valid positive integer.")
         elif expecting == 'faq':
-            await context.bot.send_message(ADMIN_ID, f"FAQ from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}): {text}")
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"FAQ from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}): {text}"
+            )
             await update.message.reply_text("Thank you! We’ll get back to you soon.")
             del user_state[chat_id]['expecting']
         elif expecting == 'password_recovery':
@@ -1189,8 +1206,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
             ]
             await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
-            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={for_user}"))],
-[KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_BASE}/aviator?chat_id={chat_id}"))]]
+            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={for_user}"))], [KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_BASE}/aviator?chat_id={chat_id}"))]]
             await context.bot.send_message(
                 for_user,
                 "Use the button below to engage in other processes",
@@ -1318,6 +1334,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except psycopg.Error as e:
         logger.error(f"Database error in show_main_menu: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
+
 async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.callback_query.from_user.id
     status = get_status(chat_id)
@@ -1329,35 +1346,6 @@ async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("What would you like help with?", reply_markup=InlineKeyboardMarkup(keyboard))
     log_interaction(chat_id, "help_menu")
 
-# Main
-def main():
-    keep_alive()
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        # Add handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("menu", show_main_menu))
-        application.add_handler(CommandHandler("game", cmd_game))
-        application.add_handler(CommandHandler("stats", stats))
-        application.add_handler(CommandHandler("reset", reset_state))
-        application.add_handler(CommandHandler("support", support))
-        application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("add_task", add_task))
-        application.add_handler(CallbackQueryHandler(button_handler))
-        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        # Add job queue tasks
-        application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
-        application.job_queue.run_daily(daily_summary, time=datetime.time(hour=20, minute=0))
-        # Log that the bot is running
-        logger.info("Bot is up and running...")
-        # Start polling
-        application.run_polling()
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        print("Failed to start bot. Check logs for details.")
-
 # ============================== START: TAP + AVIATOR ADDON ==============================
 # This block adds:
 #  - DB tables for Aviator
@@ -1368,17 +1356,17 @@ def main():
 # ---------------------------------------------------------------------------------------
 
 # ---- Imports used here only (won't collide) ----
-import math, secrets, random, datetime
-from flask import request, jsonify
+# import math, secrets, random, datetime  # Already imported earlier
+# from flask import request, jsonify  # Already imported
 
 # ---- Optional: constant for Aviator multiplier growth (front-end uses same k=0.00012) ----
 K = 0.00012  # growth per millisecond
 
-def _multiplier_at_ms(ms:int) -> float:
+def _multiplier_at_ms(ms: int) -> float:
     return (1 + K) ** ms
 
 def _sample_crash_point() -> float:
-    # Exponential-like tail; min around 1.02; typical 1.1–3.0+ with rare higher spikes.
+    # Exponential-like tail; min around 1.02; typical 1.1-3.0+ with rare higher spikes.
     u = random.random() or 1e-9
     lam = 1.1
     extra = -math.log(u) / lam
@@ -1519,7 +1507,7 @@ def api_aviator_close():
 
 # --- Aviator: last 12 crash points for chips display (per user) ---
 @app.get("/api/aviator/recent/<int:chat_id>")
-def api_aviator_recent(chat_id:int):
+def api_aviator_recent(chat_id: int):
     cursor.execute("SELECT crash_point FROM aviator_rounds WHERE chat_id=%s ORDER BY id DESC LIMIT 12", (chat_id,))
     return jsonify([float(r["crash_point"]) for r in cursor.fetchall()])
 
@@ -1559,7 +1547,8 @@ async function fetchUser(){
   const r=await fetch(`/api/user/${chat_id}`);
   if(!r.ok){greet.textContent='⚠️ Registration required.';return}
   const j=await r.json();
-  greet.textContent=`Welcome, @${j.username||'player'}`; balEl.textContent=Number(j.balance||0).toFixed(2);
+  greet.textContent=`Welcome, @${j.username||'player'}`;
+  balEl.textContent=Number(j.balance||0).toFixed(2);
 }
 async function tap(){
   const r=await fetch('/api/tap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id})});
@@ -1586,7 +1575,7 @@ AVIATOR_HTML = """<!doctype html>
     button{cursor:pointer;padding:12px 18px;border-radius:12px;font-weight:bold;border:0}
     .primary{background:#ffcd4d;color:#000}
     .good{background:#00d68f;color:#021}
-    .bad{background:#ff5c7a}
+    .bad{background:#ff5c7a;color:#fff}
     canvas{width:100%;height:340px;background:linear-gradient(180deg,#0c1224,#0a0f1d);border-radius:12px}
     .pill{display:inline-block;background:#17203a;padding:6px 10px;border-radius:999px;color:#c9d6ff;margin-right:6px}
   </style>
@@ -1655,34 +1644,46 @@ function loop(){
   draw(ms);
   if(!crashed && round.crash_point && m>=round.crash_point){
     crashed=true; m=round.crash_point; msg.textContent='💥 Crashed at x'+round.crash_point.toFixed(2);
-    document.getElementById('cash').disabled=true; document.getElementById('cancel').disabled=true;
+    document.getElementById('cash').disabled=true;
+    document.getElementById('cancel').disabled=true;
     fetch('/api/aviator/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({round_id:round.id})});
   } else { anim=requestAnimationFrame(loop); }
 }
 
-function pill(v){ const d=document.createElement('span'); d.className='pill'; d.textContent='x'+v.toFixed(2); if(v>=2) d.style.background='#0e2c24'; return d; }
+function pill(v){ const d=document.createElement('span'); d.className='pill';
+d.textContent='x'+v.toFixed(2); if(v>=2) d.style.background='#0e2c24'; return d; }
 
 async function syncBalance(){
-  const r=await fetch(`/api/user/${chat_id}`); if(r.ok){const j=await r.json(); balEl.textContent=Number(j.balance||0).toFixed(2);}
+  const r=await fetch(`/api/user/${chat_id}`); if(r.ok){const j=await r.json();
+  balEl.textContent=Number(j.balance||0).toFixed(2);}
 }
 async function loadRecent(){
-  const r=await fetch(`/api/aviator/recent/${chat_id}`); if(r.ok){ const a=await r.json(); recent.innerHTML=''; a.forEach(x=>recent.appendChild(pill(x))); }
+  const r=await fetch(`/api/aviator/recent/${chat_id}`); if(r.ok){ const a=await r.json();
+  recent.innerHTML=''; a.forEach(x=>recent.appendChild(pill(x))); }
 }
 
 document.getElementById('start').onclick=async()=>{
   const bet=parseFloat(document.getElementById('bet').value||'0');
-  document.getElementById('start').disabled=true; document.getElementById('cash').disabled=true; document.getElementById('cancel').disabled=true;
+  document.getElementById('start').disabled=true;
+  document.getElementById('cash').disabled=true;
+  document.getElementById('cancel').disabled=true;
   const r=await fetch('/api/aviator/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id,bet_amount:bet})});
   const j=await r.json();
-  if(!j.ok){ msg.textContent=j.error||'Cannot start round'; document.getElementById('start').disabled=false; return; }
-  round=j.round; ridEl.textContent=round.id; startedAt=performance.now(); crashed=false; cashed=false; crEl.textContent='?';
-  msg.textContent='✈️ Flying… Tap CASH OUT anytime.'; document.getElementById('cash').disabled=false; document.getElementById('cancel').disabled=false; syncBalance();
-  document.getElementById('cancel').onclick=async()=>{ if(!round) return; document.getElementById('cancel').disabled=true;
+  if(!j.ok){ msg.textContent=j.error||'Cannot start round';
+  document.getElementById('start').disabled=false; return; }
+  round=j.round; ridEl.textContent=round.id; startedAt=performance.now(); crashed=false;
+  cashed=false; crEl.textContent='?';
+  msg.textContent='✈️ Flying… Tap CASH OUT anytime.';
+  document.getElementById('cash').disabled=false;
+  document.getElementById('cancel').disabled=false; syncBalance();
+  document.getElementById('cancel').onclick=async()=>{ if(!round) return;
+  document.getElementById('cancel').disabled=true;
     const rr=await fetch('/api/aviator/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({round_id:round.id})});
     msg.textContent='Cancelled (treated as crash).'; await syncBalance();
   };
   document.getElementById('cash').onclick=async()=>{
-    if(!round||crashed||cashed) return; cashed=true; document.getElementById('cash').disabled=true;
+    if(!round||crashed||cashed) return; cashed=true;
+    document.getElementById('cash').disabled=true;
     const ms=performance.now()-startedAt, m=multiplierAt(ms);
     const rr=await fetch('/api/aviator/cashout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({round_id:round.id,client_multiplier:m})});
     const jj=await rr.json();
@@ -1713,6 +1714,41 @@ def app_aviator():
 
 # ================================= END: TAP + AVIATOR ADDON =================================
 
+# Main
+def main():
+    # Removed: keep_alive() - Flask is now main
+    try:
+        application = Application.builder().token(BOT_TOKEN).build()
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("menu", show_main_menu))
+        application.add_handler(CommandHandler("game", cmd_game))
+        application.add_handler(CommandHandler("stats", stats))
+        application.add_handler(CommandHandler("reset", reset_state))
+        application.add_handler(CommandHandler("support", support))
+        application.add_handler(CommandHandler("broadcast", broadcast))
+        application.add_handler(CommandHandler("add_task", add_task))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        # Add job queue tasks
+        application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
+        application.job_queue.run_daily(daily_summary, time=datetime.time(hour=20, minute=0))
+        # Log that the bot is running
+        logger.info("Bot is up and running...")
+        # Added: Set up webhook asynchronously
+        async def set_wh():
+            await application.initialize()
+            await application.start()  # Starts job_queue
+            await application.bot.set_webhook(url=WEBHOOK_URL)
+        asyncio.run(set_wh())
+        # Run Flask as main server (replaces polling)
+        port = int(os.getenv('PORT', 8080))
+        app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        print("Failed to start bot. Check logs for details.")
+
 if __name__ == "__main__":
     main()
-    
