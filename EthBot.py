@@ -30,7 +30,7 @@ import math
 import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from pydub import AudioSegment
+#from pydub import AudioSegment
 from flask import Flask, request, jsonify
 from psycopg_pool import AsyncConnectionPool
 
