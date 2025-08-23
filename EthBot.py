@@ -37,9 +37,6 @@ from threading import Thread
 # Flask setup for Render keep-alive and APIs
 app = Flask(__name__)
 
-# Load environment
-load_dotenv()
-
 # Get bot token
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
