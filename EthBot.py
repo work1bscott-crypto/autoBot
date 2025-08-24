@@ -21,6 +21,7 @@ import re
 import time
 import datetime
 import os
+import secrets
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from telegram.ext import (
     Application,
@@ -282,26 +283,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             if referred_by:
                 cursor.execute("UPDATE users SET invites = invites + 1, balance = balance + 0.1 WHERE chat_id=%s", (referred_by,))
-        conn.commit()
+            conn.commit()
+        keyboard = [[InlineKeyboardButton("🚀 Get Started", callback_data="menu")]]
+        await update.message.reply_text(
+            "Welcome to Tapify!\n\nGet paid for using your phone and doing what you love most.\n"
+            "• Read posts ➜ earn $2.5/10 words\n• Take a Walk ➜ earn $5\n"
+            "• Send Snapchat streaks ➜ earn up to $20\n• Invite friends and more!\n\n"
+            "Choose your package and start earning today.\nClick below to get started.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        reply_keyboard = [["/menu(🔙)"]]
+        if is_registered(chat_id):
+            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
+        await update.message.reply_text(
+            "Use the button's below to access the main menu and Tapify Games:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
     except psycopg.Error as e:
         logger.error(f"Database error in start: {e}")
-        await update.message.reply_text("An error occurred. Please try again.")
-        return
-    keyboard = [[InlineKeyboardButton("🚀 Get Started", callback_data="menu")]]
-    await update.message.reply_text(
-        "Welcome to Tapify!\n\nGet paid for using your phone and doing what you love most.\n"
-        "• Read posts ➜ earn $2.5/10 words\n• Take a Walk ➜ earn $5\n"
-        "• Send Snapchat streaks ➜ earn up to $20\n• Invite friends and more!\n\n"
-        "Choose your package and start earning today.\nClick below to get started.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-    reply_keyboard = [["/menu(🔙)"]]
-    if is_registered(chat_id):
-        reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
-    await update.message.reply_text(
-        "Use the button's below to access the main menu and Tapify Games:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-    )
+        await update.message.reply_text("An error occurred while accessing the database. Please try again later.")
+    except Exception as e:
+        logger.error(f"Unexpected error in start: {e}")
+        await update.message.reply_text("An unexpected error occurred. Please try again or contact @bigscottmedia.")
 
 async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
