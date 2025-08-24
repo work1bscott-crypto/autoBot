@@ -294,11 +294,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         reply_keyboard = [["/menu(🔙)"]]
         if is_registered(chat_id):
-            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
-        await update.message.reply_text(
-            "Use the button's below to access the main menu and Tapify Games:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        )
+            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?chat_id={chat_id}"))])
+       # await update.message.reply_text(
+        #    "Use the button's below to access the main menu and Tapify Games:",
+         #   reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        #)
     except psycopg.Error as e:
         logger.error(f"Database error in start: {e}")
         await update.message.reply_text("An error occurred while accessing the database. Please try again later.")
@@ -311,7 +311,7 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_registered(chat_id):
         await update.message.reply_text("Please complete registration to play the game.")
         return
-    kb = [[KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=WEBAPP_URL))]]
+    kb = [[KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?chat_id={for_user}"))]]
     await update.message.reply_text(
         "Tap to earn coins!",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
@@ -564,7 +564,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
             keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-            await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Select an account to pay to:\n\n:::Note:::\n If you are prompted by your Opay bank app to double check or cancel your transaction with any selected accoount amongst these, please ignore and continue as this is happening as a result of multiple engagement with the accounts\n Proceed with an option below:", reply_markup=InlineKeyboardMarkup(keyboard))
         elif data == "coupon_other":
             await context.bot.send_message(
                 chat_id,
@@ -592,7 +592,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = [[InlineKeyboardButton(a, callback_data=f"reg_account_{a}")] for a in PAYMENT_ACCOUNTS.keys()]
                 keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
                 keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-                await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
+                await query.edit_message_text("Select an account to pay to:\n\n:::Note:::\n If you are prompted by your Opay bank app to double check or cancel your transaction with any selected accoount amongst these, please ignore and continue as this is happening as a result of multiple engagement with the accounts\n Proceed with an option below:", reply_markup=InlineKeyboardMarkup(keyboard))
             except psycopg.Error as e:
                 logger.error(f"Database error in package_selector: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
@@ -622,7 +622,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton(a, callback_data=f"reg_account_{a}")] for a in PAYMENT_ACCOUNTS.keys()]
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
             keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-            await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Select an account to pay to:\n\n:::Note:::\n If you are prompted by your Opay bank app to double check or cancel your transaction with any selected accoount amongst these, please ignore and continue as this is happening as a result of multiple engagement with the accounts\n Proceed with an option below:", reply_markup=InlineKeyboardMarkup(keyboard))
         elif data == "reg_other":
             await context.bot.send_message(
                 chat_id,
@@ -1192,8 +1192,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("No, disable reminders", callback_data="disable_reminders")],
             ]
             await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
-            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={for_user}"))],
-[KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_BASE}/aviator?chat_id={chat_id}"))]]
+            reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?chat_id={for_user}"))],
+[KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_URL}/aviator?chat_id={chat_id}"))]]
             await context.bot.send_message(
                 for_user,
                 "Use the button below to engage in other processes",
@@ -1307,14 +1307,14 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
                 chat_id,
-                "Use the button below 'ONLY' if you get stuck on a process:",
+                "Use the buttons below to access Main  Menu and Play Tapify Games too",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
                 chat_id,
-                "Use the button below 'ONLY' if you get stuck on a process:",
+                "Use the buttons below to access the main menu and Tapify games(Available if you're registered):",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
         log_interaction(chat_id, "show_main_menu")
@@ -1364,5 +1364,4 @@ def main():
 if __name__ == "__main__":
     main()
    
-
 
