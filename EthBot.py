@@ -311,7 +311,12 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_registered(chat_id):
         await update.message.reply_text("Please complete registration to play the game.")
         return
-    kb = [[KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?chat_id={for_user}"))]]
+        kb = [[KeyboardButton(
+        text="Play Tapify",
+        web_app=WebAppInfo(
+            url=f"{WEBAPP_URL}/?chat_id={chat_id}&username={update.effective_user.username or 'guest'}"
+        )
+    )]]
     await update.message.reply_text(
         "Tap to earn coins!",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
@@ -1364,4 +1369,3 @@ def main():
 if __name__ == "__main__":
     main()
    
-
