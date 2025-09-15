@@ -68,16 +68,16 @@ if not ADMIN_ID:
 
 # Predefined payment accounts
 PAYMENT_ACCOUNTS = {
-    "Nigeria (Opay)": "🇳🇬 Account: 6110749592\nBank: Kuda Bank\nName: Chike Eluem Olanrewaju",
+    "Nigeria (Opay)": "🇳🇬 Account: 6110749592\nBank: Opay\nName: Chike Eluem Olanrewaju",
     "Nigeria (Zenith)": "🇳🇬 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
-    "Nigeria (Kuda)": "🇳🇬 Account: 2036035854\nBank: OPay\nName: Eluem, Chike Olanrewaju",
+    "Nigeria (Kuda)": "🇳🇬 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju",
 }
 
 # Predefined coupon payment accounts
 COUPON_PAYMENT_ACCOUNTS = {
-    "Coupon Acct 1 (Opay)": "🇳🇬 Account: 6110749592\nBank: Kuda Bank\nName: Chike Eluem Olanrewaju",
+    "Coupon Acct 1 (Opay)": "🇳🇬 Account: 6110749592\nBank: Opay\nName: Chike Eluem Olanrewaju",
     "Coupon Acct 2 (Zenith)": "🇳🇬 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
-    "Coupon Acct 3 (Kuda)": "🇳🇬 Account: 2036035854\nBank: OPay\nName: Eluem, Chike Olanrewaju"
+    "Coupon Acct 3 (Kuda)": "🇳🇬 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju"
 }
 
 # Predefined FAQs
@@ -569,7 +569,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
             keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-            await query.edit_message_text("Select an account to pay to:\n\n:::Note:::\n If you are prompted by your Opay bank app to double check or cancel your transaction with any selected accoount amongst these, please ignore and continue as this is happening as a result of multiple engagement with the accounts\n Proceed with an option below:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
         elif data == "coupon_other":
             await context.bot.send_message(
                 chat_id,
@@ -597,7 +597,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = [[InlineKeyboardButton(a, callback_data=f"reg_account_{a}")] for a in PAYMENT_ACCOUNTS.keys()]
                 keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
                 keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-                await query.edit_message_text("Select an account to pay to:\n\n:::Note:::\n If you are prompted by your Opay bank app to double check or cancel your transaction with any selected accoount amongst these, please ignore and continue as this is happening as a result of multiple engagement with the accounts\n Proceed with an option below:", reply_markup=InlineKeyboardMarkup(keyboard))
+                await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
             except psycopg.Error as e:
                 logger.error(f"Database error in package_selector: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
@@ -627,7 +627,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton(a, callback_data=f"reg_account_{a}")] for a in PAYMENT_ACCOUNTS.keys()]
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
             keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-            await query.edit_message_text("Select an account to pay to:\n\n:::Note:::\n If you are prompted by your Opay bank app to double check or cancel your transaction with any selected accoount amongst these, please ignore and continue as this is happening as a result of multiple engagement with the accounts\n Proceed with an option below:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
         elif data == "reg_other":
             await context.bot.send_message(
                 chat_id,
