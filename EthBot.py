@@ -309,7 +309,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
     if not is_registered(chat_id):
-        await update.message.reply_text("Please complete registration to play the game.")
+        await update.message.reply_text("Please complete registration to get login's to Tapify.")
         return
         kb = [[KeyboardButton(
         text="Play Tapify",
@@ -1290,7 +1290,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = cursor.fetchone()
         keyboard = [
             [InlineKeyboardButton("How It Works", callback_data="how_it_works")],
-            [InlineKeyboardButton("Purchase Coupon", callback_data="coupon")],
+            [InlineKeyboardButton("Purchase Code", callback_data="coupon")],
             [InlineKeyboardButton("💸 Get Registered", callback_data="package_selector")],
             [InlineKeyboardButton("❓ Help", callback_data="help")],
         ]
@@ -1312,14 +1312,14 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
                 chat_id,
-                "Use the buttons below to access Main  Menu and Play Tapify Games too",
+                "Use the buttons below to access Main Menu and Play Tapify Games too",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
                 chat_id,
-                "Use the buttons below to access the main menu and Tapify games(Available if you're registered):",
+                "Use the buttons below to access the Menu button or Login to your Tapify Account(Available if you're registered):",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
         log_interaction(chat_id, "show_main_menu")
