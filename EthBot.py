@@ -450,7 +450,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         elif data == "how_it_works":
             keyboard = [
-                [InlineKeyboardButton("💎TAP MEEE!!!!", callback_data="package_selector")],
+                [InlineKeyboardButton("💎CLICK TO PROCEED!", callback_data="package_selector")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
             ]
             await query.edit_message_text(
@@ -483,7 +483,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             voice_keyboard = [
-                [InlineKeyboardButton("✅ I've listened...", callback_data="close_voice")]
+                [InlineKeyboardButton("✅ I'm done listening...", callback_data="close_voice")]
             ]
             voice_markup = InlineKeyboardMarkup(voice_keyboard)
             try:
@@ -582,7 +582,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id, "You are already registered.")
                 return
             keyboard = [
-                [InlineKeyboardButton("✈️Standard (₦10,000)", callback_data="reg_standard")],
+                [InlineKeyboardButton("✈️Standard Payment(₦10,000)", callback_data="reg_standard")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
             ]
             await query.edit_message_text("Choose your package:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1106,7 +1106,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raise ValueError
                 user_state[chat_id]['coupon_quantity'] = quantity
                 keyboard = [
-                    [InlineKeyboardButton("Standard (₦10,000)", callback_data="coupon_standard")],
+                    [InlineKeyboardButton("Standard Payment(₦10,000)", callback_data="coupon_standard")],
                     [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
                 ]
                 await update.message.reply_text("Select the package for your coupons:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1307,12 +1307,12 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "Select an option below:"
         reply_keyboard = [["/menu(🔙)"]]
         if user and user["payment_status"] == 'registered':
-            reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
+            reply_keyboard.append([KeyboardButton(text="Start Earning On Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}?chat_id={chat_id}"))])
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             await context.bot.send_message(
                 chat_id,
-                "Use the buttons below to access Main Menu and Play Tapify Games too",
+                "Use the buttons below to access Main Menu and Start Earning on Tapify too",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
         else:
