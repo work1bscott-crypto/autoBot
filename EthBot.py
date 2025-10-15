@@ -288,10 +288,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
         keyboard = [[InlineKeyboardButton("🚀 Get Started", callback_data="menu")]]
         await update.message.reply_text(
-            "Welcome to Tapify!\n\nGet paid for using your phone and doing what you love most.\n"
+            "Welcome to Tapify!\n\n"
+            "Social Media is the new Oil Money and Tapify will help you get started mining form it.\n"
+            "Get paid for using your phone and doing what you love most.\n"
             "• Read posts ➜ earn $2.5/10 words\n• Take a Walk ➜ earn $5\n"
-            "• Send Snapchat streaks ➜ earn up to $20\n• Invite friends and more!\n\n"
-            "Choose your package and start earning today.\nClick below to get started.",
+            "• Connect with friends with streaks ➜ earn up to $20\n
+            "• Invite friends and more!\n\n"
+            "Choose your package and start earning today.\nClick the button below to get started.",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         reply_keyboard = [["/menu(🔙)"]]
@@ -437,7 +440,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 "👥 Refer a Friend and Earn Rewards!\n\n"
                 "Share your referral link with friends. For each friend who joins using your link, you earn $0.1. "
-                "If they register, you earn an additional $0.4 for Standard or $0.9 for X package.\n\n"
+                "If they register, you earn an additional $0.4 for Lite Package or $0.9 for Pro package.\n\n"
                 f"Your referral link: {referral_link}"
             )
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
@@ -464,10 +467,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
             ]
             await query.edit_message_text(
-                "🍊 HOW TAPIFY WORKS 💥\n"
+                "🍊 HOW TAPIFY WORKS 💥\n\n"
                 "Tapify rewards you for your everyday online actions — walking, gaming, sending snaps, talking to foreigners, joining forums, mining Tap coins, and engaging socially.\n"
                 "Tapify also helps its users to get online or offline jobs.\n"
-                "— — —\n"
+                "— — —\n\n"
                 "📍 TAPIFY REGISTRATION PACKAGES\n"
                 "• Tapify Pro: ₦15,000\n"
                 "• Tapify Standard: ₦10,000\n"
@@ -508,7 +511,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "— — —\n\n"
                 "🏦 PAYMENT INFO\n"
                 "• 📆 MONDAYS, WEDNESDAYS, AND FRIDAYS\n\n"
-                "🎓 You’ll also be added to my mentorship class to learn how to make up to ₦300,000 weekly with the opportunities on Tapify after registration.\n"
+                "🎓 You’ll also be added to a mentorship class to learn how to make up to ₦300,000 weekly with the opportunities on Tapify after registration.\n"
                 " Ensure to listen to the Voice Note below to understand more about our features...",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -630,8 +633,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             # Added reg_x option (Upgrade) here
             keyboard = [
-                [InlineKeyboardButton("✈Standard Payment (₦10,000)", callback_data="reg_standard")],
-                [InlineKeyboardButton("⬆️ Upgrade to X (₦15,000)", callback_data="reg_x")],
+                [InlineKeyboardButton("✈Tapify Lite Package (₦10,000)", callback_data="reg_standard")],
+                [InlineKeyboardButton("🚀Tapify Pro Package (₦15,000)", callback_data="reg_x")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
             ]
             await query.edit_message_text("Choose your package:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1245,8 +1248,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raise ValueError
                 user_state[chat_id]['coupon_quantity'] = quantity
                 keyboard = [
-                    [InlineKeyboardButton("Standard Payment (₦10,000)", callback_data="coupon_standard")],
-                    [InlineKeyboardButton("X Package (₦15,000)", callback_data="coupon_x")],
+                    [InlineKeyboardButton("Lite Package Coupons (₦10,000)", callback_data="coupon_standard")],
+                    [InlineKeyboardButton("Pro Package Coupons (₦15,000)", callback_data="coupon_x")],
                     [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
                 ]
                 await update.message.reply_text("Select the package for your coupons:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1471,9 +1474,9 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # default keyboard for non-registered users
         keyboard = [
             [InlineKeyboardButton("How It Works", callback_data="how_it_works")],
-            [InlineKeyboardButton("Purchase Code", callback_data="coupon")],
-            [InlineKeyboardButton("💸 Get Registered", callback_data="package_selector")],
-            [InlineKeyboardButton("⬆️ Upgrade", callback_data="package_selector")],  # upgrade quick button
+            [InlineKeyboardButton("Purchase Coupon Code", callback_data="coupon")],
+            [InlineKeyboardButton("💸 Get Registered Now", callback_data="package_selector")],
+            [InlineKeyboardButton("🚀 Upgrade To Tapify Pro", callback_data="package_selector")],  # upgrade quick button
             [InlineKeyboardButton("❓ Help", callback_data="help")],
         ]
         if user and user["payment_status"] == 'registered':
