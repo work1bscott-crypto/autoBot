@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# main.py — Tapify Main Bot for Telegram
+# main.py — Tapify Main Bot for Telegram (management 3 patched)
 # Requirements:
 #   pip install python-telegram-bot==20.7 psycopg[binary] python-dotenv flask pydub
 #
@@ -31,23 +31,26 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-#from pydub import AudioSegment
 from flask import Flask
 from threading import Thread
 
 # Flask setup for Render keep-alive
 app = Flask('')
 
+
 @app.route('/')
 def home():
     return "Tapify is alive!"
 
+
 def run():
     app.run(host='0.0.0.0', port=8080)
+
 
 def keep_alive():
     t = Thread(target=run)
     t.start()
+
 
 # Bot credentials
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -68,16 +71,16 @@ if not ADMIN_ID:
 
 # Predefined payment accounts
 PAYMENT_ACCOUNTS = {
-    "Nigeria (Opay)": "🇳🇬 Account: 6110749592\nBank: Opay\nName: Chike Eluem Olanrewaju",
-    "Nigeria (Zenith)": "🇳🇬 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
-    "Nigeria (Kuda)": "🇳🇬 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju",
+    "Nigeria (Opay)": "󰐕 Account: 6110749592\nBank: Opay\nName: Chike Eluem Olanrewaju",
+    "Nigeria (Zenith)": "󰐕 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
+    "Nigeria (Kuda)": "󰐕 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju",
 }
 
 # Predefined coupon payment accounts
 COUPON_PAYMENT_ACCOUNTS = {
-    "Coupon Acct 1 (Opay)": "🇳🇬 Account: 6110749592\nBank: Opay\nName: Chike Eluem Olanrewaju",
-    "Coupon Acct 2 (Zenith)": "🇳🇬 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
-    "Coupon Acct 3 (Kuda)": "🇳🇬 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju"
+    "Coupon Acct 1 (Opay)": "󰐕 Account: 6110749592\nBank: Opay\nName: Chike Eluem Olanrewaju",
+    "Coupon Acct 2 (Zenith)": "󰐕 Account: 2267515466\nBank: Zenith Bank\nName: Chike Eluem Olanrewaju",
+    "Coupon Acct 3 (Kuda)": "󰐕 Account: 2036035854\nBank: Kuda Bank\nName: Eluem, Chike Olanrewaju"
 }
 
 # Predefined FAQs
@@ -114,13 +117,6 @@ HELP_TOPICS = {
     )},
     "password_recovery": {"label": "Password Recovery", "type": "input", "text": "Please provide your registered email to request password recovery:"},
 }
-
-# Convert mp3 to ogg (Opus)
-#try:
-#    sound = AudioSegment.from_mp3("voice.mp3")
-#    sound.export("voice.ogg", format="ogg", codec="libopus")
-#except FileNotFoundError:
-#    logging.warning("voice.mp3 not found; voice note feature may fail")
 
 # Database setup with PostgreSQL
 try:
@@ -162,7 +158,7 @@ try:
         )
     """)
 
-    # Payments table
+    # Payments table (now includes is_upgrade)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
@@ -172,6 +168,7 @@ try:
             quantity INTEGER,
             total_amount INTEGER,
             payment_account TEXT,
+            is_upgrade BOOLEAN DEFAULT FALSE,
             status TEXT DEFAULT 'pending_payment',
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             approved_at TIMESTAMP
@@ -221,7 +218,6 @@ try:
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
-
 except psycopg.Error as e:
     logging.error(f"Database error: {e}")
     raise
@@ -231,8 +227,10 @@ user_state = {}
 start_time = time.time()
 
 # Logging
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 # Helper functions
 def get_status(chat_id):
@@ -244,6 +242,7 @@ def get_status(chat_id):
         logger.error(f"Database error in get_status: {e}")
         return None
 
+
 def is_registered(chat_id):
     try:
         cursor.execute("SELECT payment_status FROM users WHERE chat_id=%s", (chat_id,))
@@ -253,14 +252,17 @@ def is_registered(chat_id):
         logger.error(f"Database error in is_registered {chat_id}: {e}")
         return False
 
+
 def log_interaction(chat_id, action):
     try:
         cursor.execute("INSERT INTO interactions (chat_id, action) VALUES (%s, %s)", (chat_id, action))
     except psycopg.Error as e:
         logger.error(f"Database error in log_interaction: {e}")
 
+
 def generate_referral_code():
     return secrets.token_urlsafe(6)
+
 
 # Command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,10 +297,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_keyboard = [["/menu(🔙)"]]
         if is_registered(chat_id):
             reply_keyboard.append([KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?chat_id={chat_id}"))])
-       # await update.message.reply_text(
-        #    "Use the button's below to access the main menu and Tapify Games:",
-         #   reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        #)
     except psycopg.Error as e:
         logger.error(f"Database error in start: {e}")
         await update.message.reply_text("An error occurred while accessing the database. Please try again later.")
@@ -306,12 +304,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Unexpected error in start: {e}")
         await update.message.reply_text("An unexpected error occurred. Please try again or contact @bigscottmedia.")
 
+
 async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
     if not is_registered(chat_id):
         await update.message.reply_text("Please complete registration to get login's to Tapify.")
         return
-        kb = [[KeyboardButton(
+    kb = [[KeyboardButton(
         text="Play Tapify",
         web_app=WebAppInfo(
             url=f"{WEBAPP_URL}/?chat_id={chat_id}&username={update.effective_user.username or 'guest'}"
@@ -322,11 +321,13 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
     )
 
+
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_state[chat_id] = {'expecting': 'support_message'}
     await update.message.reply_text("Please describe your issue or question:")
     log_interaction(chat_id, "support_initiated")
+
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -361,12 +362,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Database error in stats: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
 
+
 async def reset_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id in user_state:
         del user_state[chat_id]
     await update.message.reply_text("State reset. Try the flow again.")
     log_interaction(chat_id, "reset_state")
+
 
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -397,6 +400,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Database error in add_task: {e}")
         await update.message.reply_text("An error occurred. Please try again.")
 
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id != ADMIN_ID:
@@ -405,6 +409,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_state[chat_id] = {'expecting': 'broadcast_message'}
     await update.message.reply_text("Please enter the broadcast message to send to all registered users:")
     log_interaction(chat_id, "broadcast_initiated")
+
 
 # Callback handlers
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -420,11 +425,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if chat_id in user_state:
                 del user_state[chat_id]
             await show_main_menu(update, context)
+
         elif data == "stats":
             await stats(update, context)
+
         elif data == "refer_friend":
             cursor.execute("SELECT referral_code FROM users WHERE chat_id=%s", (chat_id,))
-            referral_code = cursor.fetchone()["referral_code"]
+            row = cursor.fetchone()
+            referral_code = row["referral_code"] if row else ""
             referral_link = f"https://t.me/{context.bot.username}?start=ref_{chat_id}"
             text = (
                 "👥 Refer a Friend and Earn Rewards!\n\n"
@@ -433,6 +441,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Your referral link: {referral_link}"
             )
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
+
         elif data == "withdraw":
             cursor.execute("SELECT balance FROM users WHERE chat_id=%s", (chat_id,))
             balance = cursor.fetchone()["balance"]
@@ -448,37 +457,58 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Your withdrawal request has been sent to the admin. Please wait for processing.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
             )
+
         elif data == "how_it_works":
             keyboard = [
                 [InlineKeyboardButton("💎CLICK TO PROCEED!", callback_data="package_selector")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
             ]
             await query.edit_message_text(
-                "🟡 HOW TAPIFY💥 WORKS\n"
-                "Tapify rewards you for your everyday online actions — walking, gaming, sending snaps, joining forums, and social engagement.\n"
+                "🍊 HOW TAPIFY WORKS 💥\n"
+                "Tapify rewards you for your everyday online actions — walking, gaming, sending snaps, talking to foreigners, joining forums, mining Tap coins, and engaging socially.\n"
+                "Tapify also helps its users to get online or offline jobs.\n"
                 "— — —\n"
-                "📍 TAPIFY STANDARD PACKAGE — ₦10,000\n"
-                "• 🎉 Starter Reward: ₦8,000 Newbie Bonus\n"
-                "• 🛜 Free Data: 5GB on your preferred network\n"
-                "• 🪙 Tap Coins: Instant $10 reward\n"
-                "• 💰 Revenue Share: ₦9,000 per direct recruit\n"
-                "• 🔁 Indirect Earnings: ₦250 (1st level) – ₦100 (2nd level)\n"
-                "• 🧾 Forum Earnings: ₦200 per 10 words\n"
-                "• 🎥 Snapchat/TikTok Streaks: $10 per streak\n"
-                "• 🚶‍♂ Steps: ₦10 per 100 steps\n"
-                "• 🏍 Rider Earnings: ₦20 per delivery\n"
-                "• 📖 Reading Tasks: ₦0.2 per novel read\n\n"
-                "• 🎙 Recording Tasks: ₦0.2 per audio\n"
-                "• 📤 Approved Topics & Social Links: ₦5 each\n"
-                "• 🎮 Tapify Games: ₦20 per session\n"
-                "• 🧑‍🤝‍🧑 Unlimited Team Earnings: Passive income from your team\n"
-                "• 🏦 Student Loans: No collateral required\n"
-                "• 💳 Automated Withdrawals: Weekly payouts\n"
-                "• Up to ₦5,000 daily from Candy Crush\n"
-                "• Earn up to $50 sending Snapchat streaks\n"
-                "• Daily passive income from your team + your earnings (₦10,000 daily)\n"
-                "• 📺 Subscription Bonuses: Free access to GOtv, DStv & Netflix\n"
+                "📍 TAPIFY REGISTRATION PACKAGES\n"
+                "• Tapify Pro: ₦15,000\n"
+                "• Tapify Standard: ₦10,000\n"
                 "— — —\n\n"
+                "🚀 TAPIFY PRO PACKAGE\n"
+                "Earning Structure:\n"
+                "• 🪷 Newbie Bonus: ₦14,000\n"
+                "• 🛜 Freebie: 20GB Preferred Network Data or ₦8,000 Airtime\n"
+                "• 🏦 Tapify Loan: ₦50,000 – ₦1,500,000 with easy payback from your earnings and flexible payment.\n"
+                "• 🏠 Tapify Homes: Verified agents for home hunts provided with 10% cost coverage by Tapify.\n"
+                "• 📺 Ads Earnings: Watch ads and get paid up to $30 daily.\n"
+                "• 🚀 Tapify Boost: 10× faster earning than the Standard Package.\n"
+                "— — —\n\n"
+                "🔥 TAPIFY STANDARD PACKAGE\n"
+                "Earning Structure:\n"
+                "• 🎊 Newbie Bonus: ₦8,000\n"
+                "• 🛜 Freebie: 10GB Preferred Network Data or ₦5,000 Airtime\n"
+                "• 📩 Engage on Forum Topics: ₦200 per engagement\n"
+                "— — —\n\n"
+                "📨🧡 MORE EARNING FEATURES\n"
+                "• 🎥 TikTok or Snapchat Streak: ₦10,000 per streak kept\n"
+                "• 🏍 Rider Earnings: ₦8,000 per delivery\n"
+                "• 🚶‍♂ Step Earnings: ₦10,000 per 100 steps\n"
+                "• 💬 Chat with Foreigners: Earn up to $100 in tips\n"
+                "• 📤 Story Upload: ₦5,000 per approved topic\n"
+                "• 🎙 Recording Earnings: ₦200 per record upload\n"
+                "• 🌐 Daily Social Media Earnings: ₦5,000\n"
+                "— — —\n\n"
+                "💫 ADDITIONAL BENEFITS\n"
+                "• 🏦 Student Loan: No collateral required\n"
+                "• 🪙 Tapify Coin: Free mining for all users\n"
+                "• 📄 Tap Jobs: Tapify helps users find jobs online and offline\n"
+                "— — —\n\n"
+                "💖 ADDITIONAL EARNINGS\n"
+                "• 💰 Revenue Share: ₦13,000 – ₦9,000\n"
+                "• 🔄 Indirect Bonus: ₦500 – ₦250\n"
+                "• 🌀 2nd Indirect Bonus: ₦200 – ₦100\n"
+                "— — —\n\n"
+                "🏦 PAYMENT INFO\n"
+                "• 📆 MONDAYS, WEDNESDAYS, AND FRIDAYS\n\n"
+                "🎓 You’ll also be added to my mentorship class to learn how to make up to ₦300,000 weekly with the opportunities on Tapify after registration.\n"
                 " Ensure to listen to the Voice Note below to understand more about our features...",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -508,8 +538,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text="An error occurred while sending the voice note. Please try again.",
                     reply_markup=voice_markup
                 )
+
         elif data == "close_voice":
             await query.message.delete()
+
         elif data == "coupon":
             user_state[chat_id] = {'expecting': 'coupon_quantity'}
             keyboard = [[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]
@@ -517,17 +549,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "How many coupons do you want to purchase?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        elif data == "coupon_standard":
-            package = "Standard"
-            price = 10000
-            quantity = user_state[chat_id]['coupon_quantity']
+
+        # Coupon package selection: now supports Standard and X
+        elif data in ["coupon_standard", "coupon_x"]:
+            package = "Standard" if data == "coupon_standard" else "X"
+            # Price mapping: Standard = 10000, X = 15000 (per your instruction)
+            price = 10000 if package == "Standard" else 15000
+            quantity = user_state.get(chat_id, {}).get('coupon_quantity')
+            if not quantity:
+                await query.edit_message_text("Quantity not found. Please start coupon purchase again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
+                return
             total = quantity * price
             user_state[chat_id].update({'coupon_package': package, 'coupon_total': total})
 
             await context.bot.send_message(
                 ADMIN_ID,
-                f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) "
-                f"wants to purchase {quantity} {package} coupons for ₦{total}."
+                f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) wants to purchase {quantity} {package} coupons for ₦{total}."
             )
 
             keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
@@ -538,57 +575,71 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"You are purchasing {quantity} {package} coupons.\nTotal amount: ₦{total}\n\nSelect the account to pay to:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+
         elif data.startswith("coupon_account_"):
             account = data[len("coupon_account_"):]
             payment_details = COUPON_PAYMENT_ACCOUNTS.get(account)
             if not payment_details:
                 await context.bot.send_message(chat_id, "Error: Invalid account. Contact @bigscottmedia.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
                 return
+            user_state.setdefault(chat_id, {})
             user_state[chat_id]['selected_account'] = account
             user_state[chat_id]['expecting'] = 'coupon_screenshot'
-            package = user_state[chat_id]['coupon_package']
-            quantity = user_state[chat_id]['coupon_quantity']
-            total = user_state[chat_id]['coupon_total']
-            cursor.execute(
-                "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (chat_id, 'coupon', package, quantity, total, account, 'pending_payment')
-            )
-            payment_id = cursor.fetchone()["id"]
-            conn.commit()
-            user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
-            keyboard = [
-                [InlineKeyboardButton("Change Account", callback_data="show_coupon_account_selection")],
-                [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
-            ]
-            await context.bot.send_message(
-                chat_id,
-                f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            package = user_state[chat_id].get('coupon_package')
+            quantity = user_state[chat_id].get('coupon_quantity')
+            total = user_state[chat_id].get('coupon_total')
+            # Insert a payment row for coupon purchase (is_upgrade False)
+            try:
+                cursor.execute(
+                    "INSERT INTO payments (chat_id, type, package, quantity, total_amount, payment_account, is_upgrade, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (chat_id, 'coupon', package, quantity, total, account, False, 'pending_payment')
+                )
+                payment_id = cursor.fetchone()["id"]
+                conn.commit()
+                user_state[chat_id]['waiting_approval'] = {'type': 'coupon', 'payment_id': payment_id}
+                keyboard = [
+                    [InlineKeyboardButton("Change Account", callback_data="show_coupon_account_selection")],
+                    [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
+                ]
+                await context.bot.send_message(
+                    chat_id,
+                    f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except psycopg.Error as e:
+                logger.error(f"Database error creating coupon payment: {e}")
+                await query.edit_message_text("An error occurred creating payment. Please try again.")
+
         elif data == "show_coupon_account_selection":
             keyboard = [[InlineKeyboardButton(a, callback_data=f"coupon_account_{a}")] for a in COUPON_PAYMENT_ACCOUNTS.keys()]
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="coupon_other")])
             keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
             await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
+
         elif data == "coupon_other":
             await context.bot.send_message(
                 chat_id,
                 "Please contact @bigscottmedia to complete your payment for other region coupon purchase.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
             )
+
         elif data == "package_selector":
             status = get_status(chat_id)
             if status == 'registered':
                 await context.bot.send_message(chat_id, "You are already registered.")
                 return
+            # Added reg_x option (Upgrade) here
             keyboard = [
-                [InlineKeyboardButton("✈️Standard Payment(₦10,000)", callback_data="reg_standard")],
+                [InlineKeyboardButton("✈Standard Payment (₦10,000)", callback_data="reg_standard")],
+                [InlineKeyboardButton("⬆️ Upgrade to X (₦15,000)", callback_data="reg_x")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
             ]
             await query.edit_message_text("Choose your package:", reply_markup=InlineKeyboardMarkup(keyboard))
+
         elif data in ["reg_standard", "reg_x"]:
             package = "Standard" if data == "reg_standard" else "X"
-            user_state[chat_id] = {'package': package}
+            # Mark upgrade True for X
+            user_state[chat_id] = {'package': package, 'upgrade': True if package == "X" else False}
             try:
                 cursor.execute("UPDATE users SET package=%s, payment_status='pending_payment' WHERE chat_id=%s", (package, chat_id))
                 if cursor.rowcount == 0:
@@ -602,14 +653,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Database error in package_selector: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
                 return
+
         elif data.startswith("reg_account_"):
             account = data[len("reg_account_"):]
             payment_details = PAYMENT_ACCOUNTS.get(account)
             if not payment_details:
                 await context.bot.send_message(chat_id, "Error: Invalid account. Contact @bigscottmedia.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
                 return
+            # set selected account and expecting screenshot
+            user_state.setdefault(chat_id, {})
             user_state[chat_id]['selected_account'] = account
             user_state[chat_id]['expecting'] = 'reg_screenshot'
+            # include package + upgrade marker in waiting_approval for clarity
+            user_state[chat_id]['waiting_approval'] = {'type': 'registration', 'package': user_state[chat_id].get('package'), 'is_upgrade': user_state[chat_id].get('upgrade', False)}
             keyboard = [
                 [InlineKeyboardButton("Change Account", callback_data="show_account_selection")],
                 [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]
@@ -619,8 +675,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Payment details:\n\n{payment_details}\n\nPlease make the payment and send the screenshot.",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            # Optional: alert admin that a registration payment flow started (with upgrade tag)
+            try:
+                upgrade_tag = " --Upgrade" if user_state[chat_id].get('upgrade') else ""
+                await context.bot.send_message(ADMIN_ID, f"User @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}) started registration for {user_state[chat_id].get('package')}{upgrade_tag}. Waiting for screenshot.")
+            except Exception:
+                pass
+
         elif data == "show_account_selection":
-            package = user_state[chat_id].get('package', '')
+            package = user_state.get(chat_id, {}).get('package', '')
             if not package:
                 await query.edit_message_text("Please select a package first.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
                 return
@@ -628,12 +691,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton("Other country option", callback_data="reg_other")])
             keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
             await query.edit_message_text("Select an account to pay to:", reply_markup=InlineKeyboardMarkup(keyboard))
+
         elif data == "reg_other":
             await context.bot.send_message(
                 chat_id,
                 "Please contact @bigscottmedia to complete your payment for other region registration.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
             )
+
+        # Approve handlers
         elif data.startswith("approve_"):
             parts = data.split("_")
             if parts[1] == "reg":
@@ -675,6 +741,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except psycopg.Error as e:
                     logger.error(f"Database error in approve_task: {e}")
                     await query.edit_message_text("An error occurred. Please try again.")
+
+        # Reject handlers (new)
+        elif data.startswith("reject_reg_"):
+            user_chat_id = int(data.split("_")[2])
+            try:
+                cursor.execute("UPDATE users SET payment_status='rejected' WHERE chat_id=%s", (user_chat_id,))
+                conn.commit()
+                await context.bot.send_message(user_chat_id, "❌ Your payment was rejected by the admin. Please re-check your payment and resend a proper screenshot of your payment made to any of the provided account or contact @bigscottmedia to rectify your issues.")
+                await query.edit_message_text("Payment rejected and user notified.")
+            except psycopg.Error as e:
+                logger.error(f"Database error in reject_reg: {e}")
+                await query.edit_message_text("An error occurred while rejecting. Please try again.")
+
+        elif data.startswith("reject_coupon_"):
+            payment_id = int(data.split("_")[2])
+            try:
+                cursor.execute("UPDATE payments SET status='rejected' WHERE id=%s", (payment_id,))
+                conn.commit()
+                cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
+                row = cursor.fetchone()
+                if row:
+                    user_chat_id = row["chat_id"]
+                    await context.bot.send_message(user_chat_id, "❌ Your coupon payment was rejected by the admin. Please check your payment and resend a clear screenshot or contact @bigscottmedia.")
+                await query.edit_message_text("Coupon payment rejected and user notified.")
+            except psycopg.Error as e:
+                logger.error(f"Database error in reject_coupon: {e}")
+                await query.edit_message_text("An error occurred while rejecting. Please try again.")
+
         elif data.startswith("finalize_reg_"):
             user_chat_id = int(data.split("_")[2])
             user_state[ADMIN_ID] = {'expecting': 'user_credentials', 'for_user': user_chat_id}
@@ -683,6 +777,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Please send the username and password for user {user_chat_id} in the format:\nusername\npassword"
             )
             await query.edit_message_text("Waiting for user credentials.")
+
         elif data.startswith("reject_task_"):
             parts = data.split("_")
             task_id = int(parts[2])
@@ -703,6 +798,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in reject_task: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         elif data.startswith("pending_"):
             parts = data.split("_")
             if parts[1] == "reg":
@@ -716,6 +812,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except psycopg.Error as e:
                     logger.error(f"Database error in pending_coupon: {e}")
                     await query.edit_message_text("An error occurred. Please try again.")
+
         elif data == "check_approval":
             if 'waiting_approval' not in user_state.get(chat_id, {}):
                 await context.bot.send_message(chat_id, "You have no pending payments.")
@@ -742,6 +839,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except psycopg.Error as e:
                     logger.error(f"Database error in check_approval: {e}")
                     await context.bot.send_message(chat_id, "An error occurred. Please try again.")
+
         elif data == "toggle_reminder":
             try:
                 cursor.execute("SELECT alarm_setting FROM users WHERE chat_id=%s", (chat_id,))
@@ -754,11 +852,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in toggle_reminder: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         elif data == "boost_ai":
             await query.edit_message_text(
                 f"🚀 Boost with AI\n\nAccess Advanced AI-powered features to maximize your earnings: {AI_BOOST_LINK}",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]])
             )
+
         elif data == "user_registered":
             try:
                 cursor.execute("SELECT username, email, password, package FROM users WHERE chat_id=%s", (chat_id,))
@@ -779,6 +879,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in user_registered: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         elif data == "daily_tasks":
             try:
                 cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
@@ -790,6 +891,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in daily_tasks: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         elif data == "earn_extra":
             now = datetime.datetime.now()
             try:
@@ -817,6 +919,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in earn_extra: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         elif data.startswith("verify_task_"):
             task_id = int(data[len("verify_task_"):])
             try:
@@ -826,9 +929,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Task not found.")
                     return
                 task_type, link = task.values()
-                regel = re.compile(r'(@[A-Za-z0-9]+)|(?:https?://)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))/([A-Za-z0-9\+]+)')
-                chat_username = regel.search(link).group()
-                if chat_username.startswith("http"):
+                regel = re.compile(r'(@[A-Za-z0-9_]+)|(?:https?://)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))/([A-Za-z0-9_+]+)')
+                m = regel.search(link)
+                chat_username = m.group() if m else None
+                if chat_username and chat_username.startswith("http"):
                     chat_username = chat_username.split("/")[-1]
                 if task_type in ["join_group", "join_channel"]:
                     try:
@@ -851,15 +955,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in verify_task: {e}")
                 await query.answer("An error occurred. Please try again.")
+
         elif data == "faq":
             keyboard = [[InlineKeyboardButton(faq["question"], callback_data=f"faq_{key}")] for key, faq in FAQS.items()]
             keyboard.append([InlineKeyboardButton("Ask Another Question", callback_data="faq_custom")])
             keyboard.append([InlineKeyboardButton("🔙 Help Menu", callback_data="help")])
             await query.edit_message_text("Select a question or ask your own:", reply_markup=InlineKeyboardMarkup(keyboard))
+
         elif data.startswith("faq_"):
             faq_key = data[len("faq_"):]
             if faq_key == "custom":
-                user_state[chat_id]['expecting'] = 'faq'
+                user_state.setdefault(chat_id, {})['expecting'] = 'faq'
                 await query.edit_message_text("Please type your question:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
             else:
                 faq = FAQS.get(faq_key)
@@ -870,11 +976,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     await query.edit_message_text("FAQ not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]))
+
         elif data in HELP_TOPICS:
             topic = HELP_TOPICS[data]
             keyboard = [[InlineKeyboardButton("🔙 Help Menu", callback_data="help")]]
             if topic["type"] == "input":
-                user_state[chat_id]['expecting'] = data
+                user_state.setdefault(chat_id, {})['expecting'] = data
                 await query.edit_message_text(topic["text"], reply_markup=InlineKeyboardMarkup(keyboard))
             elif topic["type"] == "toggle":
                 keyboard = [
@@ -887,8 +994,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 content = topic["text"] if topic["type"] == "text" else f"Watch here: {topic['url']}"
                 await query.edit_message_text(content, reply_markup=InlineKeyboardMarkup(keyboard))
+
         elif data == "help":
             await help_menu(update, context)
+
         elif data == "enable_reminders":
             try:
                 cursor.execute("UPDATE users SET alarm_setting=1 WHERE chat_id=%s", (chat_id,))
@@ -900,6 +1009,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in enable_reminders: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         elif data == "disable_reminders":
             try:
                 cursor.execute("UPDATE users SET alarm_setting=0 WHERE chat_id=%s", (chat_id,))
@@ -911,12 +1021,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in disable_reminders: {e}")
                 await query.edit_message_text("An error occurred. Please try again.")
+
         else:
             logger.warning(f"Unknown callback data: {data}")
             await query.edit_message_text("Unknown action. Please try again or contact @bigscottmedia.")
     except Exception as e:
         logger.error(f"Error in button_handler: {e}")
-        await query.edit_message_text("An error occurred. Please try again or contact @bigscottmedia.")
+        try:
+            await query.edit_message_text("An error occurred. Please try again or contact @bigscottmedia.")
+        except Exception:
+            pass
+
 
 # Message handlers
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -933,21 +1048,26 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
+                [InlineKeyboardButton("Reject", callback_data=f"reject_reg_{chat_id}")]
             ]
+            # upgrade tag if present
+            is_upgrade = user_state.get(chat_id, {}).get('upgrade', False) or (user_state.get(chat_id, {}).get('package') == 'X')
+            upgrade_tag = " --Upgrade" if is_upgrade else ""
             await context.bot.send_photo(
                 ADMIN_ID,
                 file_id,
-                caption=f"📸 Registration Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
+                caption=f"📸 Registration Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}){upgrade_tag}",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             await update.message.reply_text("✅ Screenshot received! Awaiting admin approval.")
-            user_state[chat_id]['waiting_approval'] = {'type': 'registration'}
+            user_state[chat_id]['waiting_approval'] = {'type': 'registration', 'is_upgrade': is_upgrade}
             context.job_queue.run_once(check_registration_payment, 3600, data={'chat_id': chat_id})
         elif expecting == 'coupon_screenshot':
             payment_id = user_state[chat_id]['waiting_approval']['payment_id']
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_coupon_{payment_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_coupon_{payment_id}")],
+                [InlineKeyboardButton("Reject", callback_data=f"reject_coupon_{payment_id}")]
             ]
             await context.bot.send_photo(
                 ADMIN_ID,
@@ -969,11 +1089,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
             )
             await update.message.reply_text("Screenshot received. Awaiting admin approval.")
-        del user_state[chat_id]['expecting']
+        # cleanup expecting key
+        if 'expecting' in user_state.get(chat_id, {}):
+            user_state[chat_id].pop('expecting', None)
         log_interaction(chat_id, "photo_upload")
     except Exception as e:
         logger.error(f"Error in handle_photo: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
+
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
@@ -993,21 +1116,25 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_reg_{chat_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_reg_{chat_id}")],
+                [InlineKeyboardButton("Reject", callback_data=f"reject_reg_{chat_id}")]
             ]
+            is_upgrade = user_state.get(chat_id, {}).get('upgrade', False) or (user_state.get(chat_id, {}).get('package') == 'X')
+            upgrade_tag = " --Upgrade" if is_upgrade else ""
             await context.bot.send_document(
                 ADMIN_ID,
                 file_id,
-                caption=f"📸 Registration Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id})",
+                caption=f"📸 Registration Payment from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}){upgrade_tag}",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             await update.message.reply_text("✅ Screenshot received! Awaiting admin approval.")
-            user_state[chat_id]['waiting_approval'] = {'type': 'registration'}
+            user_state[chat_id]['waiting_approval'] = {'type': 'registration', 'is_upgrade': is_upgrade}
             context.job_queue.run_once(check_registration_payment, 3600, data={'chat_id': chat_id})
         elif expecting == 'coupon_screenshot':
             payment_id = user_state[chat_id]['waiting_approval']['payment_id']
             keyboard = [
                 [InlineKeyboardButton("Approve", callback_data=f"approve_coupon_{payment_id}")],
                 [InlineKeyboardButton("Pending", callback_data=f"pending_coupon_{payment_id}")],
+                [InlineKeyboardButton("Reject", callback_data=f"reject_coupon_{payment_id}")]
             ]
             await context.bot.send_document(
                 ADMIN_ID,
@@ -1029,11 +1156,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ])
             )
             await update.message.reply_text("Screenshot received. Awaiting admin approval.")
-        del user_state[chat_id]['expecting']
+        if 'expecting' in user_state.get(chat_id, {}):
+            user_state[chat_id].pop('expecting', None)
         log_interaction(chat_id, "document_upload")
     except Exception as e:
         logger.error(f"Error in handle_document: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
+
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
@@ -1046,8 +1175,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Please provide your full name:")
             user_state[chat_id] = {'expecting': 'name'}
             return
-    expecting = user_state[chat_id]['expecting']
+    expecting = user_state.get(chat_id, {}).get('expecting')
     try:
+        # Name flow
         if expecting == 'name':
             name = text
             if not name or len(name) < 2:
@@ -1056,6 +1186,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_state[chat_id]['name'] = name
             user_state[chat_id]['expecting'] = 'email'
             await update.message.reply_text("Please provide your email address:")
+
+        # Email flow
         elif expecting == 'email':
             email = text
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
@@ -1064,6 +1196,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_state[chat_id]['email'] = email
             user_state[chat_id]['expecting'] = 'phone'
             await update.message.reply_text("Please provide your phone number (with country code, e.g., +2341234567890):")
+
+        # Phone flow
         elif expecting == 'phone':
             phone = text
             if not re.match(r"\+?\d{10,15}", phone):
@@ -1072,6 +1206,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_state[chat_id]['phone'] = phone
             user_state[chat_id]['expecting'] = 'telegram_username'
             await update.message.reply_text("Please provide your Telegram username (e.g., @bigscott):")
+
+        # Telegram handle and finalize details
         elif expecting == 'telegram_username':
             telegram_username = text
             if not re.match(r"^@[A-Za-z0-9_]{5,}$", telegram_username):
@@ -1083,6 +1219,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (user_state[chat_id]['name'], user_state[chat_id]['email'], user_state[chat_id]['phone'], telegram_username, chat_id)
                 )
                 conn.commit()
+
                 cursor.execute("SELECT package FROM users WHERE chat_id=%s", (chat_id,))
                 pkg = cursor.fetchone()["package"]
                 keyboard = [[InlineKeyboardButton("Finalize Registration", callback_data=f"finalize_reg_{chat_id}")]]
@@ -1099,6 +1236,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except psycopg.Error as e:
                 logger.error(f"Database error in pending_details: {e}")
                 await update.message.reply_text("An error occurred. Please try again.")
+
+        # Coupon quantity: now shows Standard and X options
         elif expecting == 'coupon_quantity':
             try:
                 quantity = int(text)
@@ -1106,17 +1245,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raise ValueError
                 user_state[chat_id]['coupon_quantity'] = quantity
                 keyboard = [
-                    [InlineKeyboardButton("Standard Payment(₦10,000)", callback_data="coupon_standard")],
+                    [InlineKeyboardButton("Standard Payment (₦10,000)", callback_data="coupon_standard")],
+                    [InlineKeyboardButton("X Package (₦15,000)", callback_data="coupon_x")],
                     [InlineKeyboardButton("🔙 Main Menu", callback_data="menu")],
                 ]
                 await update.message.reply_text("Select the package for your coupons:", reply_markup=InlineKeyboardMarkup(keyboard))
-                del user_state[chat_id]['expecting']
+                # do not keep expecting after showing options
+                user_state[chat_id].pop('expecting', None)
             except ValueError:
                 await update.message.reply_text("Please enter a valid positive integer.")
+
+        # FAQ custom submission
         elif expecting == 'faq':
             await context.bot.send_message(ADMIN_ID, f"FAQ from @{update.effective_user.username or 'Unknown'} (chat_id: {chat_id}): {text}")
             await update.message.reply_text("Thank you! We’ll get back to you soon.")
             del user_state[chat_id]['expecting']
+
+        # Password recovery
         elif expecting == 'password_recovery':
             cursor.execute("SELECT username, email, password FROM users WHERE email=%s AND chat_id=%s AND payment_status='registered'", (text, chat_id))
             user = cursor.fetchone()
@@ -1136,6 +1281,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("No account found with that email or you are not fully registered. Please try again or contact @bigscottmedia.")
             del user_state[chat_id]['expecting']
+
+        # Support message forwarding
         elif expecting == 'support_message':
             await context.bot.send_message(
                 ADMIN_ID,
@@ -1143,22 +1290,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text("Thank you! Our support team will get back to you soon.")
             del user_state[chat_id]['expecting']
+
+        # Admin sending coupon codes after approval
         elif isinstance(expecting, dict) and expecting.get('type') == 'coupon_codes' and chat_id == ADMIN_ID:
             payment_id = expecting['payment_id']
             codes = text.splitlines()
+            sent_codes = []
             for code in codes:
                 code = code.strip()
                 if code:
                     cursor.execute("INSERT INTO coupons (payment_id, code) VALUES (%s, %s)", (payment_id, code))
+                    sent_codes.append(code)
             conn.commit()
             cursor.execute("SELECT chat_id FROM payments WHERE id=%s", (payment_id,))
-            user_chat_id = cursor.fetchone()["chat_id"]
-            await context.bot.send_message(
-                user_chat_id,
-                "🎉 Your coupon purchase is approved!\n\nHere are your coupons:\n" + "\n".join(codes)
-            )
+            user_chat_row = cursor.fetchone()
+            user_chat_id = user_chat_row["chat_id"] if user_chat_row else None
+            if user_chat_id:
+                await context.bot.send_message(
+                    user_chat_id,
+                    "🎉 Your coupon purchase is approved!\n\nHere are your coupons:\n" + "\n".join(sent_codes)
+                )
             await update.message.reply_text("Coupons sent to the user successfully.")
             del user_state[chat_id]['expecting']
+
+        # Admin sets credentials for a user
         elif expecting == 'user_credentials' and chat_id == ADMIN_ID:
             lines = text.splitlines()
             if len(lines) != 2:
@@ -1198,16 +1353,33 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await context.bot.send_message(for_user, "Would you like to receive daily reminders to complete your tasks?", reply_markup=InlineKeyboardMarkup(keyboard))
             reply_keyboard = [["/menu(🔙)"], [KeyboardButton(text="Play Tapify", web_app=WebAppInfo(url=f"{WEBAPP_URL}/?chat_id={for_user}"))],
-[KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_URL}/aviator?chat_id={chat_id}"))]]
+                              [KeyboardButton(text="Play Aviator", web_app=WebAppInfo(url=f"{WEBAPP_URL}/aviator?chat_id={chat_id}"))]]
             await context.bot.send_message(
                 for_user,
                 "Use the button below to engage in other processes",
                 reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
             del user_state[chat_id]
+
+        # Admin sending broadcast message
+        elif expecting == 'broadcast_message' and chat_id == ADMIN_ID:
+            message_to_send = text
+            cursor.execute("SELECT chat_id FROM users WHERE payment_status IS NOT NULL")
+            rows = cursor.fetchall()
+            sent = 0
+            for r in rows:
+                try:
+                    await context.bot.send_message(r["chat_id"], message_to_send)
+                    sent += 1
+                except Exception:
+                    continue
+            await update.message.reply_text(f"Broadcast sent to {sent} users.")
+            del user_state[chat_id]['expecting']
+
     except Exception as e:
         logger.error(f"Error in handle_text: {e}")
         await update.message.reply_text("An error occurred. Please try again or contact @bigscottmedia.")
+
 
 # Job functions
 async def check_registration_payment(context: ContextTypes.DEFAULT_TYPE):
@@ -1221,6 +1393,7 @@ async def check_registration_payment(context: ContextTypes.DEFAULT_TYPE):
             user_state[chat_id] = {'expecting': 'name'}
             await context.bot.send_message(chat_id, "Please provide your full name:")
 
+
 async def check_coupon_payment(context: ContextTypes.DEFAULT_TYPE):
     payment_id = context.job.data['payment_id']
     try:
@@ -1232,6 +1405,7 @@ async def check_coupon_payment(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id, "Your coupon payment is still being reviewed. Click below to check status:", reply_markup=InlineKeyboardMarkup(keyboard))
     except psycopg.Error as e:
         logger.error(f"Database error in check_coupon_payment: {e}")
+
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1246,6 +1420,7 @@ async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
     except psycopg.Error as e:
         logger.error(f"Database error in daily_reminder: {e}")
 
+
 async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now()
     start_time = now - datetime.timedelta(days=1)
@@ -1253,7 +1428,7 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
         cursor.execute("SELECT COUNT(*) FROM users WHERE registration_date >= %s", (start_time,))
         new_users = cursor.fetchone()["count"]
         cursor.execute("""
-            SELECT SUM(CASE package WHEN 'Standard' THEN 10000 WHEN 'X' THEN 14000 ELSE 0 END)
+            SELECT SUM(CASE package WHEN 'Standard' THEN 10000 WHEN 'X' THEN 15000 ELSE 0 END)
             FROM users
             WHERE approved_at >= %s AND payment_status = 'registered'
         """, (start_time,))
@@ -1282,16 +1457,23 @@ async def daily_summary(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Database error in daily_summary: {e}")
         await context.bot.send_message(ADMIN_ID, "Error generating daily summary.")
 
+
 # Menus
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+    # Handles both callback_query and message commands
+    if update.callback_query:
+        chat_id = update.callback_query.from_user.id
+    else:
+        chat_id = update.effective_chat.id
     try:
         cursor.execute("SELECT payment_status, package FROM users WHERE chat_id=%s", (chat_id,))
         user = cursor.fetchone()
+        # default keyboard for non-registered users
         keyboard = [
             [InlineKeyboardButton("How It Works", callback_data="how_it_works")],
             [InlineKeyboardButton("Purchase Code", callback_data="coupon")],
             [InlineKeyboardButton("💸 Get Registered", callback_data="package_selector")],
+            [InlineKeyboardButton("⬆️ Upgrade", callback_data="package_selector")],  # upgrade quick button
             [InlineKeyboardButton("❓ Help", callback_data="help")],
         ]
         if user and user["payment_status"] == 'registered':
@@ -1325,7 +1507,12 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_interaction(chat_id, "show_main_menu")
     except psycopg.Error as e:
         logger.error(f"Database error in show_main_menu: {e}")
-        await update.message.reply_text("An error occurred. Please try again.")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("An error occurred. Please try again.")
+        else:
+            await update.message.reply_text("An error occurred. Please try again.")
+
+
 async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.callback_query.from_user.id
     status = get_status(chat_id)
@@ -1333,39 +1520,39 @@ async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == 'registered':
         keyboard.append([InlineKeyboardButton("👥 Refer a Friend", callback_data="refer_friend")])
     keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="menu")])
-    query = update.callback_query
-    await query.edit_message_text("What would you like help with?", reply_markup=InlineKeyboardMarkup(keyboard))
-    log_interaction(chat_id, "help_menu")
+    await update.callback_query.edit_message_text("Help topics:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Main
+
+# Bot startup and handler registration
 def main():
     keep_alive()
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        # Add handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("menu", show_main_menu))
-        application.add_handler(CommandHandler("game", cmd_game))
-        application.add_handler(CommandHandler("stats", stats))
-        application.add_handler(CommandHandler("reset", reset_state))
-        application.add_handler(CommandHandler("support", support))
-        application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("add_task", add_task))
-        application.add_handler(CallbackQueryHandler(button_handler))
-        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        # Add job queue tasks
-        application.job_queue.run_daily(daily_reminder, time=datetime.time(hour=8, minute=0))
-        application.job_queue.run_daily(daily_summary, time=datetime.time(hour=20, minute=0))
-        # Log that the bot is running
-        logger.info("Bot is up and running...")
-        # Start polling
-        application.run_polling()
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        print("Failed to start bot. Check logs for details.")
-        
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    # Commands
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("game", cmd_game))
+    application.add_handler(CommandHandler("support", support))
+    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("reset_state", reset_state))
+    application.add_handler(CommandHandler("add_task", add_task))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+
+    # Callback queries
+    application.add_handler(CallbackQueryHandler(button_handler))
+
+    # Message handlers
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Jobs: simple repeating schedule; adjust times as necessary
+    # run reminders every 24 hours (first run after 10 seconds), summary every 24 hours (first after 20 seconds)
+    application.job_queue.run_repeating(daily_reminder, interval=86400, first=10)
+    application.job_queue.run_repeating(daily_summary, interval=86400, first=20)
+
+    # Start the bot (polling)
+    application.run_polling()
+
+
 if __name__ == "__main__":
     main()
-   
