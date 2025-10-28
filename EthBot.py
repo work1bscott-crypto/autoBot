@@ -292,7 +292,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Social Media is the new Oil Money and Tapify will help you get started mining form it.\n"
             "Get paid for using your phone and doing what you love most.\n"
             "• Read posts ➜ earn $2.5/10 words\n• Take a Walk ➜ earn $5\n"
-            "• Connect with friends with streaks ➜ earn up to $20\n
+            "• Connect with friends with streaks ➜ earn up to $20\n"
             "• Invite friends and more!\n\n"
             "Choose your package and start earning today.\nClick the button below to get started.",
             reply_markup=InlineKeyboardMarkup(keyboard),
